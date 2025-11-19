@@ -65,10 +65,7 @@
           "libappindicator3-1"
         ]
       },
-      "appimage": {
-        "license": "",
-        "category": "Utility"
-      }
+      "appimage": {}
     }
   },
 
