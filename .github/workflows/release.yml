@@ -3,83 +3,69 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 jobs:
-  release:
-    runs-on: ${{ matrix.os }}
+  build:
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          # macOS builds (Intel)
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            bundle-targets: 'app,dmg'
-          # Windows builds
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bundle-targets: 'msi,nsis'
-          # Linux builds
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            bundle-targets: 'appimage,deb'
+        platform:
+          - macos-latest
+          - ubuntu-latest
+          - windows-latest
+
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      # -------------------------
+      # Install Node (for Svelte)
+      # -------------------------
+      - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: 18
+          cache: 'npm'
 
-      - name: Setup Rust
+      # -------------------------
+      # Install Rust (for Tauri)
+      # -------------------------
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Tauri CLI
-        run: npm install -g @tauri-apps/cli
-
-      - name: Install system dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      # Linux additional dependencies
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            build-essential \
+            curl \
+            wget \
+            libsoup2.4-dev \
+            libjavascriptcoregtk-4.0-dev
 
-      - name: Build application
-        uses: tauri-apps/tauri-action@v0.5.15
+      # -------------------------
+      # Install JS dependencies
+      # -------------------------
+      - name: Install frontend dependencies
+        run: npm install
+
+      # -------------------------
+      # Build and Publish Release
+      # -------------------------
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'SecurePass ${{ github.ref_name }}'
-          releaseBody: |
-            ## SecurePass ${{ github.ref_name }}
-
-            A secure, cross-platform password manager built with Rust and Svelte.
-
-            ### Installation
-            Download the appropriate installer for your platform from the assets below:
-
-            - **macOS**: Download the `.dmg` file and run the installer
-            - **Windows**: Download the `.msi` or `.exe` file and run the installer
-            - **Linux**: Download the `.AppImage` for portable use or `.deb` for system installation
-
-            ### Features
-            - Military-grade encryption (ChaCha20-Poly1305 + Argon2)
-            - Secure password generation with customizable options
-            - Auto-lock timer and clipboard security
-            - Export/import encrypted vault backups
-            - Cross-platform support
+          tagName: ${{ github.ref_name }}                        # Tag (v1.0.0)
+          releaseName: "SecurePass ${{ github.ref_name }}"       # Release title
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }}
+
