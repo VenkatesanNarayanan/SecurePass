@@ -51,7 +51,7 @@ jobs:
         run: npm ci
 
       - name: Build application
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.5.15
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -77,4 +77,4 @@ jobs:
             - Cross-platform support
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle-targets }}
+          args: --target ${{ matrix.target }}
