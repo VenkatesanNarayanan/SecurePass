@@ -3,12 +3,14 @@
   "productName": "SecurePass",
   "version": "1.0.0",
   "identifier": "com.securepass.app",
+
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../build"
   },
+
   "app": {
     "windows": [
       {
@@ -27,6 +29,7 @@
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self';"
     }
   },
+
   "bundle": {
     "active": true,
     "targets": [
@@ -37,7 +40,7 @@
       "appimage",
       "deb"
     ],
-    "createUpdaterBundle": false,
+
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -45,15 +48,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+
     "windows": {
-      "certificateThumbprint": null,
-      "digestAlgorithm": "sha256",
-      "timestampUrl": null
+      "digestAlgorithm": "sha256"
     },
+
     "macOS": {
-      "frameworks": [],
       "minimumSystemVersion": "10.15"
     },
+
     "linux": {
       "deb": {
         "depends": [
@@ -63,15 +66,11 @@
         ]
       },
       "appimage": {
-        "bundle": {
-          "alsa": false,
-          "gstreamer": false,
-          "gtk": false,
-          "webkitgtk": false
-        }
+        "active": true
       }
     }
   },
+
   "plugins": {
     "dialog": {}
   }
