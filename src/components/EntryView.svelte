@@ -65,8 +65,12 @@
   }
 
   function isPasswordField(fieldName: string): boolean {
-    const passwordFields = ['password', 'passphrase', 'pin'];
-    return passwordFields.some(pw => fieldName.toLowerCase().includes(pw));
+    const passwordPatterns = [
+      'password', 'passphrase', 'pin', 'code', 'key', 'secret', 'token',
+      'pwd', 'pass', 'auth', 'credential', 'access'
+    ];
+    const lowerFieldName = fieldName.toLowerCase();
+    return passwordPatterns.some(pattern => lowerFieldName.includes(pattern));
   }
 
   function maskValue(value: string, fieldName: string): string {
