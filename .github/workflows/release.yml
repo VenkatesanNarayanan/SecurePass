@@ -24,22 +24,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # -------------------------
-      # Install Node (for Svelte)
-      # -------------------------
+      # Install Node (Frontend)
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: 'npm'
 
-      # -------------------------
-      # Install Rust (for Tauri)
-      # -------------------------
+      # Install Rust (Backend)
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # Linux additional dependencies
+      # Linux dependencies
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-latest'
         run: |
@@ -55,16 +51,12 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
-            
-       # -------------------------
-       # Install JS dependencies
-       # -------------------------
-       - name: Install frontend dependencies
-         run: npm install
 
-      # -------------------------
-      # Build and Publish Release
-      # -------------------------
+      # Install frontend deps
+      - name: Install frontend dependencies
+        run: npm install
+
+      # Build & Publish Release
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0.5.15
         env:
@@ -72,26 +64,5 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "SecurePass ${{ github.ref_name }}"
-          releaseBody: |
-            ## SecurePass ${{ github.ref_name }}
-
-            A secure, cross-platform password manager built with Rust and Svelte.
-
-            ### Installation
-            Download the appropriate installer for your platform from the assets below:
-
-            - **macOS**: Download the `.dmg` file and run the installer
-            - **Windows**: Download the `.msi` or `.exe` file and run the installer
-            - **Linux**: Download the `.AppImage` for portable use or `.deb` for system installation
-
-            ### Features
-            - Military-grade encryption (ChaCha20-Poly1305 + Argon2)
-            - Secure password generation with customizable options
-            - Auto-lock timer and clipboard security
-            - Export/import encrypted vault backups
-            - Cross-platform support
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.platform == 'macos-latest' && 'x86_64-apple-darwin' || matrix.platform == 'ubuntu-latest' && 'x86_64-unknown-linux-gnu' || 'x86_64-pc-windows-msvc' }}
-          includeBundledTauri: false
-
