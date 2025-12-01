@@ -56,9 +56,9 @@ jobs:
             librsvg2-dev \
             patchelf
             
-      # -------------------------
-      # Install JS dependencies
-      # -------------------------
+       # -------------------------
+       # Install JS dependencies
+       # -------------------------
        - name: Install frontend dependencies
          run: npm install
 
