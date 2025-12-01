@@ -1,22 +1,22 @@
-name: Manual Test Build
+name: Manual Test
 
 on:
   workflow_dispatch:
     inputs:
-      target:
-        description: 'Build target'
+      platform:
+        description: 'Platform to test'
         required: true
-        default: 'x86_64-unknown-linux-gnu'
+        default: 'macos-latest'
         type: choice
         options:
-          - x86_64-unknown-linux-gnu
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
-          - x86_64-pc-windows-msvc
+          - macos-latest
+          - ubuntu-latest
+          - windows-latest
 
 jobs:
   test-build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.platform }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,15 +24,20 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: 18
+          cache: 'npm'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ inputs.target }}
+
+      - name: Install Linux dependencies
+        if: inputs.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget libgtk-3-dev libwebkit2gtk-4.1-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
-      - name: Test build
-        run: npm run tauri build -- --target ${{ inputs.target }} --no-bundle
+      - name: Build Tauri App
+        run: npm run tauri build
