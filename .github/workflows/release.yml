@@ -59,39 +59,39 @@ jobs:
       # -------------------------
       # Install JS dependencies
       # -------------------------
-      - name: Install frontend dependencies
-        run: npm install
+       - name: Install frontend dependencies
+         run: npm install
 
-       # -------------------------
-       # Build and Publish Release
-       # -------------------------
-       - name: Build Tauri App
-         uses: tauri-apps/tauri-action@v0.5.15
-         env:
-           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-         with:
-           tagName: ${{ github.ref_name }}
-           releaseName: "SecurePass ${{ github.ref_name }}"
-           releaseBody: |
-             ## SecurePass ${{ github.ref_name }}
+      # -------------------------
+      # Build and Publish Release
+      # -------------------------
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0.5.15
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "SecurePass ${{ github.ref_name }}"
+          releaseBody: |
+            ## SecurePass ${{ github.ref_name }}
 
-             A secure, cross-platform password manager built with Rust and Svelte.
+            A secure, cross-platform password manager built with Rust and Svelte.
 
-             ### Installation
-             Download the appropriate installer for your platform from the assets below:
+            ### Installation
+            Download the appropriate installer for your platform from the assets below:
 
-             - **macOS**: Download the `.dmg` file and run the installer
-             - **Windows**: Download the `.msi` or `.exe` file and run the installer
-             - **Linux**: Download the `.AppImage` for portable use or `.deb` for system installation
+            - **macOS**: Download the `.dmg` file and run the installer
+            - **Windows**: Download the `.msi` or `.exe` file and run the installer
+            - **Linux**: Download the `.AppImage` for portable use or `.deb` for system installation
 
-             ### Features
-             - Military-grade encryption (ChaCha20-Poly1305 + Argon2)
-             - Secure password generation with customizable options
-             - Auto-lock timer and clipboard security
-             - Export/import encrypted vault backups
-             - Cross-platform support
-           releaseDraft: false
-           prerelease: false
-           args: --target ${{ matrix.platform == 'macos-latest' && 'x86_64-apple-darwin' || matrix.platform == 'ubuntu-latest' && 'x86_64-unknown-linux-gnu' || 'x86_64-pc-windows-msvc' }}
-           includeBundledTauri: false
+            ### Features
+            - Military-grade encryption (ChaCha20-Poly1305 + Argon2)
+            - Secure password generation with customizable options
+            - Auto-lock timer and clipboard security
+            - Export/import encrypted vault backups
+            - Cross-platform support
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.platform == 'macos-latest' && 'x86_64-apple-darwin' || matrix.platform == 'ubuntu-latest' && 'x86_64-unknown-linux-gnu' || 'x86_64-pc-windows-msvc' }}
+          includeBundledTauri: false
 
