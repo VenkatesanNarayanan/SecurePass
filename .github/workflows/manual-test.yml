@@ -41,3 +41,12 @@ jobs:
 
       - name: Build Tauri App
         run: npm run tauri build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecurePass-${{ inputs.platform }}
+          path: |
+            src-tauri/target/release/bundle/**/*
+            src-tauri/target/debug/bundle/**/*
+          retention-days: 7
