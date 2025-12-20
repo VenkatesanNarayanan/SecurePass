@@ -66,3 +66,5 @@ jobs:
           releaseName: "SecurePass ${{ github.ref_name }}"
           releaseDraft: false
           prerelease: false
+          includeBundledTauri: true
+          args: --no-sign
