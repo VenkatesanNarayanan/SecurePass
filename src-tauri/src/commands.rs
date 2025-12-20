@@ -218,6 +218,8 @@ pub async fn lock_vault(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), 
         crypto.zeroize_key();
     }
 
+    // Clear vault from memory for security - forces re-validation on unlock
+    state.vault = None;
     state.crypto = None;
     state.is_locked = true;
 
