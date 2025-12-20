@@ -21,7 +21,8 @@ impl CryptoManager {
         );
 
         argon2.hash_password_into(master_password.as_bytes(), salt, &mut key)
-            .map_err(|e| format!("Argon2 hashing failed: {:?}", e).into())?;
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        Ok(key)
         Ok(key)
     }
 
