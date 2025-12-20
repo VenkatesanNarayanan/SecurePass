@@ -61,10 +61,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0.5.15
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SKIP_CODESIGNING: "true"
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "SecurePass ${{ github.ref_name }}"
           releaseDraft: false
           prerelease: false
           includeBundledTauri: true
-          args: --no-sign
