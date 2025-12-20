@@ -1,6 +1,5 @@
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, KeyInit};
 use chacha20poly1305::aead::Aead;
-use aead::Payload;
 use argon2::{Argon2, Params, Algorithm, Version};
 use rand::RngCore;
 use rand::rngs::OsRng;
@@ -21,8 +20,7 @@ impl CryptoManager {
         );
 
         argon2.hash_password_into(master_password.as_bytes(), salt, &mut key)
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        Ok(key)
+            .map_err(|e| format!("Key derivation failed: {}", e))?;
         Ok(key)
     }
 
