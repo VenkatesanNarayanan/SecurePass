@@ -152,10 +152,11 @@
       </div>
 
       <!-- Fields -->
-      <div class="fields-section">
-        <h3>Fields</h3>
-        <div class="fields-grid">
-          {#each entry.fields as field}
+      {#if entry.fields.filter(field => field.value && field.value.trim() !== '').length > 0}
+        <div class="fields-section">
+          <h3>Fields</h3>
+          <div class="fields-grid">
+            {#each entry.fields.filter(field => field.value && field.value.trim() !== '') as field}
             <div class="field-item">
               <label>{field.name}</label>
               <div class="field-value-container">
@@ -183,6 +184,7 @@
           {/each}
         </div>
       </div>
+      {/if}
     </div>
   </div>
 </div>

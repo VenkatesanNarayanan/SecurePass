@@ -13,7 +13,6 @@ pub struct CryptoManager {
 impl CryptoManager {
     /// Derive a 256-bit key from master password using Argon2id
     pub fn derive_key(master_password: &str, salt: &[u8; 32]) -> Result<Key, Box<dyn std::error::Error>> {
-        println!("Deriving key with password length: {}, salt length: {}", master_password.len(), salt.len());
         let mut key = Key::default();
         let argon2 = Argon2::new(
             Algorithm::Argon2id,
@@ -21,17 +20,9 @@ impl CryptoManager {
             Params::new(65536, 3, 1, None).unwrap(), // 64 KiB, 3 iterations, 1 thread
         );
 
-        println!("Starting Argon2 hashing...");
-        match argon2.hash_password_into(master_password.as_bytes(), salt, &mut key) {
-            Ok(_) => {
-                println!("Argon2 hashing completed successfully");
-                Ok(key)
-            },
-            Err(e) => {
-                println!("Argon2 hashing failed: {:?}", e);
-                Err(format!("Argon2 hashing failed: {:?}", e).into())
-            }
-        }
+        argon2.hash_password_into(master_password.as_bytes(), salt, &mut key)
+            .map_err(|e| format!("Argon2 hashing failed: {:?}", e).into())?;
+        Ok(key)
     }
 
     /// Create a new CryptoManager with the derived key

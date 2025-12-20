@@ -126,7 +126,12 @@ fn load_vault(master_password: &str) -> Result<Vault, String> {
     let ciphertext = &data[44..];
 
     let crypto = CryptoManager::new(master_password, &salt_bytes).map_err(|e| e.to_string())?;
-    let decrypted_bytes = crypto.decrypt(ciphertext, &nonce, b"vault").map_err(|e| e.to_string())?;
+
+    let decrypted_bytes = crypto.decrypt(ciphertext, &nonce, b"vault").map_err(|e| {
+        // Return a user-friendly error message for wrong password
+        "Incorrect master password".to_string()
+    })?;
+
     let json = String::from_utf8(decrypted_bytes).map_err(|e| e.to_string())?;
     let vault: Vault = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     Ok(vault)
@@ -149,39 +154,21 @@ pub async fn create_vault(
     state: tauri::State<'_, Mutex<AppState>>,
     request: CreateVaultRequest,
 ) -> Result<VaultMetadata, String> {
-    println!("Creating vault with password length: {}", request.master_password.len());
+    let mut state = state.lock().map_err(|e| format!("State lock error: {}", e))?;
 
-    let mut state = state.lock().map_err(|e| {
-        println!("State lock error: {}", e);
-        format!("State lock error: {}", e)
-    })?;
-
-    println!("Creating new vault...");
     // Create new vault
     let mut vault = Vault::new();
-    println!("Vault created with salt length: {}", vault.salt.len());
 
-    println!("Creating crypto manager...");
     // Create crypto manager with the master password
-    let crypto = match CryptoManager::new(&request.master_password, &vault.salt) {
-        Ok(crypto) => {
-            println!("Crypto manager created successfully");
-            crypto
-        },
-        Err(e) => {
-            println!("Failed to create crypto manager: {:?}", e);
-            return Err(format!("Failed to create crypto manager: {:?}", e));
-        }
-    };
+    let crypto = CryptoManager::new(&request.master_password, &vault.salt)
+        .map_err(|e| format!("Failed to create crypto manager: {:?}", e))?;
 
-    println!("Creating test entry...");
     // Create a default entry for testing
     let mut test_entry = Entry::new("web-app".to_string(), "Welcome to SecurePass".to_string());
     test_entry.notes = "This is your first entry. Feel free to edit or delete it.".to_string();
 
     // Add the test entry to vault
     vault.add_entry(test_entry);
-    println!("Test entry added, vault now has {} entries", vault.entries.len());
 
     // Save vault to file
     save_vault(&vault, &crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
@@ -191,9 +178,7 @@ pub async fn create_vault(
     state.crypto = Some(crypto);
     state.is_locked = false;
 
-    println!("State updated successfully");
     let metadata = VaultMetadata::from(state.vault.as_ref().unwrap());
-    println!("Vault metadata created: {} entries", metadata.entry_count);
     Ok(metadata)
 }
 
@@ -206,8 +191,7 @@ pub async fn unlock_vault(
 
     if state.vault.is_none() {
         // Try to load vault from file
-        let vault = load_vault(&request.master_password)
-            .map_err(|e| format!("Failed to load vault: {}", e))?;
+        let vault = load_vault(&request.master_password)?;
         state.vault = Some(vault);
     }
 

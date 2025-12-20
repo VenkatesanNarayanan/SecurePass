@@ -63,10 +63,24 @@
     } catch (err) {
       console.error("Vault operation failed:", err);
       if (err instanceof Error) {
-        if (err.message.includes("invoke")) {
+        const msg = err.message;
+        if (msg.includes("invoke")) {
           error = "Tauri API not available. Please run 'npm run tauri dev' to start the SecurePass application.";
+        } else if (msg.includes("Incorrect master password") || msg.includes("Decryption failed") || msg.includes("Failed to load vault")) {
+          error = "Incorrect master password. Please try again.";
+        } else if (msg.includes("Invalid vault file") || msg.includes("Invalid salt") || msg.includes("Invalid nonce")) {
+          error = "Vault file appears to be corrupted. Please check your vault file or create a new one.";
         } else {
-          error = err.message;
+          error = msg;
+        }
+      } else if (typeof err === 'string') {
+        // Handle string errors from Tauri
+        if (err.includes("Incorrect master password") || err.includes("Decryption failed") || err.includes("Failed to load vault")) {
+          error = "Incorrect master password. Please try again.";
+        } else if (err.includes("Invalid vault file") || err.includes("Invalid salt") || err.includes("Invalid nonce")) {
+          error = "Vault file appears to be corrupted. Please check your vault file or create a new one.";
+        } else {
+          error = err;
         }
       } else {
         error = "An unexpected error occurred";
