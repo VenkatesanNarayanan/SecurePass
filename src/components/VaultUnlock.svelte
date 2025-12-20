@@ -156,11 +156,13 @@
       </button>
     </form>
 
-    {#if vaultExists}
+    {#if vaultExists && !vaultStatus?.is_locked}
       <div class="vault-info">
         <p>Vault contains {vaultStatus?.entry_count || 0} entries</p>
       </div>
-    {:else}
+    {/if}
+
+    {#if !vaultExists}
       <div class="security-notice">
         <p><strong>Security Notice:</strong> Your master password is used to encrypt all your data.
         Choose a strong, memorable password and keep it safe.</p>
