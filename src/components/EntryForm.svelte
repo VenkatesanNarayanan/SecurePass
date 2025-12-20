@@ -537,10 +537,10 @@
 
   input, select, textarea {
     width: 100%;
-    padding: 10px 12px;
-    border: 2px solid #e2e8f0;
+    padding: 12px;
+    border: 2px solid #e1e5e9;
     border-radius: 6px;
-    font-size: 14px;
+    font-size: 16px;
     transition: border-color 0.2s;
     box-sizing: border-box;
   }

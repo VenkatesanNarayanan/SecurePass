@@ -69,10 +69,10 @@
 
   .search-input {
     width: 100%;
-    padding: 10px 40px 10px 40px;
-    border: 2px solid #e2e8f0;
-    border-radius: 8px;
-    font-size: 14px;
+    padding: 12px 40px 12px 40px;
+    border: 2px solid #e1e5e9;
+    border-radius: 6px;
+    font-size: 16px;
     transition: border-color 0.2s;
     box-sizing: border-box;
   }
@@ -108,11 +108,11 @@
   }
 
   .category-filter {
-    padding: 10px 12px;
-    border: 2px solid #e2e8f0;
-    border-radius: 8px;
+    padding: 12px;
+    border: 2px solid #e1e5e9;
+    border-radius: 6px;
     background: white;
-    font-size: 14px;
+    font-size: 16px;
     color: #4a5568;
     cursor: pointer;
     transition: border-color 0.2s;
@@ -155,7 +155,7 @@
     }
 
     .category-filter {
-      font-size: 16px;
+      font-size: 16px; /* Prevents zoom on iOS */
     }
   }
 </style>
