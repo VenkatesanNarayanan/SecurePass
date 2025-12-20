@@ -576,9 +576,9 @@
   .custom-field-row input,
   .custom-field-row select,
   .custom-field-row textarea {
-    border: 1px solid #cbd5e0;
-    padding: 8px;
-    font-size: 13px;
+    border: 2px solid #e1e5e9;
+    padding: 12px;
+    font-size: 16px;
   }
 
   .custom-field-row textarea {
