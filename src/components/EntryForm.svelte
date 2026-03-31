@@ -78,8 +78,9 @@
         if (entry.fields) {
             fieldValues = Object.fromEntries(entry.fields.map((f: any) => [f.name, f.value]));
 
-            // Populate custom fields (fields not in the current template)
-            const templateFieldNames = getCurrentTemplate().map(f => f.name);
+            // Populate custom fields (fields not in the original entry's template)
+            const entryTemplate = CATEGORY_TEMPLATES[entry.category] || CATEGORY_TEMPLATES["generic"];
+            const templateFieldNames = entryTemplate.map(f => f.name);
             customFields = entry.fields
                 .filter((f: any) => !templateFieldNames.includes(f.name))
                 .map((f: any, index: number) => ({

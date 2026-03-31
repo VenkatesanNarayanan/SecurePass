@@ -71,7 +71,5 @@
     }
   },
 
-  "plugins": {
-    "dialog": {}
-  }
+  "plugins": {}
 }

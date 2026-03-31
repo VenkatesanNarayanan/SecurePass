@@ -140,33 +140,53 @@
     }
   }
 
-  // Handle import vault
-  async function handleImport() {
+  // Handle import from PasswordLocker JSON export
+  async function handleImportFromPasswordLocker() {
     try {
-      // Use Tauri's dialog API to select file
       const { open } = await import("@tauri-apps/plugin-dialog");
       const filePath = await open({
-        title: "Import SecurePass Vault",
-        filters: [{
-          name: "SecurePass Vault",
-          extensions: ["spvault"]
-        }],
+        title: "Import from PasswordLocker",
+        filters: [{ name: "PasswordLocker Export", extensions: ["json"] }],
         multiple: false
       });
 
       if (filePath) {
-        // Prompt for master password
+        const count = await invoke("import_from_password_locker", { request: { filePath } });
+        await loadData();
+        alert(`Imported ${count} entries from PasswordLocker!`);
+      }
+    } catch (error) {
+      console.error("Failed to import from PasswordLocker:", error);
+      alert("Import failed: " + error);
+    }
+  }
+
+  // Handle import vault — supports .spvault (SecurePass) and .json (PasswordLocker export)
+  async function handleImport() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const filePath = await open({
+        title: "Import Vault",
+        filters: [
+          { name: "SecurePass Vault", extensions: ["spvault"] },
+          { name: "PasswordLocker Export", extensions: ["json"] }
+        ],
+        multiple: false
+      });
+
+      if (!filePath) return;
+
+      if ((filePath as string).endsWith(".json")) {
+        // PasswordLocker JSON export
+        const count = await invoke("import_from_password_locker", { request: { filePath } });
+        await loadData();
+        alert(`Imported ${count} entries from PasswordLocker!`);
+      } else {
+        // SecurePass .spvault
         const masterPassword = prompt("Enter the master password for the vault you want to import:");
         if (!masterPassword) return;
 
-        await invoke("import_vault", {
-          request: {
-            filePath,
-            masterPassword
-          }
-        });
-
-        // Refresh data after import
+        await invoke("import_vault", { request: { filePath, masterPassword } });
         await loadData();
         alert("Vault imported successfully!");
       }

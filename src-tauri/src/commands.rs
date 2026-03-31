@@ -681,6 +681,96 @@ fn save_vault_to_path(vault: &Vault, crypto: &CryptoManager, file_path: &str) ->
     Ok(())
 }
 
+// ---- PasswordLocker JSON import ----
+
+#[derive(Deserialize)]
+struct PasswordLockerField {
+    key: String,
+    value: String,
+    value_type: String,
+}
+
+#[derive(Deserialize)]
+struct PasswordLockerEntry {
+    title: String,
+    icon: Option<String>,
+    fields: Vec<PasswordLockerField>,
+}
+
+fn icon_to_category(icon: &str) -> &'static str {
+    if icon.contains('🌐') || icon.contains('🌍') || icon.contains('🌎') || icon.contains('🔗') {
+        "web-app"
+    } else if icon.contains('🖥') || icon.contains('💻') || icon.contains('🖧') {
+        "ssh-server"
+    } else if icon.contains('🏦') || icon.contains('💳') || icon.contains('💰') || icon.contains('🏧') {
+        "bank-financial"
+    } else if icon.contains('📧') || icon.contains('✉') || icon.contains('📨') || icon.contains('📩') {
+        "email"
+    } else if icon.contains('📶') || icon.contains('📡') || icon.contains('🛜') {
+        "wi-fi"
+    } else {
+        "generic"
+    }
+}
+
+fn value_type_to_field_type(value_type: &str) -> FieldType {
+    match value_type.to_lowercase().as_str() {
+        "password" | "pw" => FieldType::Password,
+        "long_text" | "longtext" | "textarea" | "notes" => FieldType::LongText,
+        _ => FieldType::Text,
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportFromPasswordLockerRequest {
+    pub file_path: String,
+}
+
+#[command]
+pub async fn import_from_password_locker(
+    state: tauri::State<'_, Mutex<AppState>>,
+    request: ImportFromPasswordLockerRequest,
+) -> Result<usize, String> {
+    let mut state = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+
+    if state.is_locked || state.vault.is_none() || state.crypto.is_none() {
+        return Err("Vault is locked".to_string());
+    }
+
+    let json = std::fs::read_to_string(&request.file_path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    let pl_entries: Vec<PasswordLockerEntry> = serde_json::from_str(&json)
+        .map_err(|e| format!("Invalid PasswordLocker export file: {}", e))?;
+
+    let count = pl_entries.len();
+
+    {
+        let vault = state.vault.as_mut().unwrap();
+        for pl_entry in pl_entries {
+            let category = pl_entry.icon.as_deref()
+                .map(icon_to_category)
+                .unwrap_or("generic")
+                .to_string();
+            let mut entry = Entry::new(category, pl_entry.title);
+            for field in pl_entry.fields {
+                let field_type = value_type_to_field_type(&field.value_type);
+                entry.add_field(field.key, field_type, field.value);
+            }
+            vault.add_entry(entry);
+        }
+    }
+
+    {
+        let crypto = state.crypto.as_ref().unwrap();
+        let vault = state.vault.as_ref().unwrap();
+        save_vault(vault, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
+    }
+
+    Ok(count)
+}
+
 /// Load vault from a specific file path
 fn load_vault_from_path(file_path: &str, master_password: &str) -> Result<Vault, String> {
     let data = std::fs::read(file_path).map_err(|e| e.to_string())?;
