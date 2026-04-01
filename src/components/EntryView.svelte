@@ -96,8 +96,21 @@
 </script>
 
 <!-- Modal Overlay -->
-<div class="modal-overlay" onclick={onClose}>
-  <div class="modal-content" onclick={(event) => event.stopPropagation()}>
+<div
+  class="modal-overlay"
+  onclick={onClose}
+  onkeydown={(e) => e.key === 'Escape' && onClose()}
+  role="presentation"
+>
+  <div
+    class="modal-content"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Entry Details"
+    tabindex="-1"
+  >
     <div class="modal-header">
       <div class="entry-info">
         <div class="entry-icon">
@@ -124,14 +137,14 @@
       <div class="info-section">
         {#if entry.notes}
           <div class="info-item">
-            <label>Notes</label>
+            <span class="label">Notes</span>
             <div class="notes-content">{entry.notes}</div>
           </div>
         {/if}
 
         {#if entry.tags && entry.tags.length > 0}
           <div class="info-item">
-            <label>Tags</label>
+            <span class="label">Tags</span>
             <div class="tags">
               {#each entry.tags as tag}
                 <span class="tag">{tag}</span>
@@ -141,12 +154,12 @@
         {/if}
 
         <div class="info-item">
-          <label>Created</label>
+          <span class="label">Created</span>
           <span>{formatDate(entry.created_at)}</span>
         </div>
 
         <div class="info-item">
-          <label>Last Updated</label>
+          <span class="label">Last Updated</span>
           <span>{formatDate(entry.updated_at)}</span>
         </div>
       </div>
@@ -158,7 +171,7 @@
           <div class="fields-grid">
             {#each entry.fields.filter(field => field.value && field.value.trim() !== '') as field}
             <div class="field-item">
-              <label>{field.name}</label>
+              <span class="label">{field.name}</span>
               <div class="field-value-container">
                 <div class="field-value" class:password={isPasswordField(field.name)}>
                   {maskValue(field.value, field.name)}
@@ -326,7 +339,7 @@
     align-items: flex-start;
   }
 
-  .info-item label {
+  .info-item .label {
     font-weight: 600;
     color: #4a5568;
     min-width: 100px;
@@ -373,7 +386,7 @@
     padding: 16px;
   }
 
-  .field-item label {
+  .field-item .label {
     display: block;
     font-weight: 600;
     color: #4a5568;
@@ -465,7 +478,7 @@
       gap: 4px;
     }
 
-    .info-item label {
+    .info-item .label {
       min-width: auto;
     }
   }

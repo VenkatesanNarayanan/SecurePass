@@ -35,7 +35,13 @@
   {:else}
     <div class="entries-grid">
       {#each entries as entry (entry.id)}
-         <div class="entry-card" onclick={() => onViewEntry(entry)}>
+         <div
+           class="entry-card"
+           onclick={() => onViewEntry(entry)}
+           onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onViewEntry(entry)}
+           role="button"
+           tabindex="0"
+         >
            <div class="entry-header">
              <div class="entry-icon">
                {getCategoryIcon(entry.category)}

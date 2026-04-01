@@ -225,8 +225,21 @@
 </script>
 
 <!-- Modal Overlay -->
-  <div class="modal-overlay" onclick={handleCancel}>
-    <div class="modal-content" onclick={(event) => event.stopPropagation()}>
+  <div
+    class="modal-overlay"
+    onclick={handleCancel}
+    onkeydown={(e) => e.key === 'Escape' && handleCancel()}
+    role="presentation"
+  >
+    <div
+      class="modal-content"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Entry Form"
+      tabindex="-1"
+    >
     <div class="modal-header">
       <h2>{entry ? 'Edit Entry' : 'New Entry'}</h2>
       <button class="close-btn" onclick={handleCancel}>✕</button>

@@ -46,7 +46,8 @@ impl Entry {
     }
 
     /// Get field value
-    pub fn get_field_value(&self, field_name: &str, crypto: &CryptoManager) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    #[allow(dead_code)]
+    pub fn get_field_value(&self, field_name: &str, _crypto: &CryptoManager) -> Result<Option<String>, Box<dyn std::error::Error>> {
         for field in &self.fields {
             if field.name == field_name {
                 return field.get_plaintext_value().map(Some);
@@ -56,6 +57,7 @@ impl Entry {
     }
 
     /// Update field value
+    #[allow(dead_code)]
     pub fn update_field(&mut self, field_name: &str, new_value: String, _crypto: &CryptoManager) -> Result<(), Box<dyn std::error::Error>> {
         for field in &mut self.fields {
             if field.name == field_name {
@@ -89,6 +91,7 @@ impl Field {
     }
 
     /// Encrypt the field value
+    #[allow(dead_code)]
     pub fn encrypt_value(&mut self, crypto: &CryptoManager) -> Result<(), Box<dyn std::error::Error>> {
         let nonce = CryptoManager::generate_nonce();
         let aad = generate_aad(&self.name, Utc::now().timestamp(), "field");
@@ -191,6 +194,7 @@ impl Vault {
     }
 
     /// Filter entries by category
+    #[allow(dead_code)]
     pub fn filter_by_category(&self, category: &str) -> Vec<&Entry> {
         self.entries.iter().filter(|entry| entry.category == category).collect()
     }

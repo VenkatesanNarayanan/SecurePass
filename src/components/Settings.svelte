@@ -59,8 +59,21 @@
   loadSettings();
 </script>
 
-<div class="modal-overlay" onclick={onClose}>
-  <div class="modal-content" onclick={(event) => event.stopPropagation()}>
+<div
+  class="modal-overlay"
+  onclick={onClose}
+  onkeydown={(e) => e.key === 'Escape' && onClose()}
+  role="presentation"
+>
+  <div
+    class="modal-content"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Settings"
+    tabindex="-1"
+  >
     <div class="modal-header">
       <h2>⚙️ Settings</h2>
       <button class="close-btn" onclick={onClose}>✕</button>

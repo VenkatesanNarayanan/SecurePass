@@ -127,7 +127,7 @@ fn load_vault(master_password: &str) -> Result<Vault, String> {
 
     let crypto = CryptoManager::new(master_password, &salt_bytes).map_err(|e| e.to_string())?;
 
-    let decrypted_bytes = crypto.decrypt(ciphertext, &nonce, b"vault").map_err(|e| {
+    let decrypted_bytes = crypto.decrypt(ciphertext, &nonce, b"vault").map_err(|_e| {
         // Return a user-friendly error message for wrong password
         "Incorrect master password".to_string()
     })?;
