@@ -566,6 +566,11 @@
     box-sizing: border-box;
   }
 
+  input, select {
+    height: 46px;
+    padding: 0 12px;
+  }
+
   input:focus, select:focus, textarea:focus {
     outline: none;
     border-color: #667eea;
@@ -598,12 +603,21 @@
   .custom-field-row select,
   .custom-field-row textarea {
     border: 2px solid #e1e5e9;
-    padding: 12px;
     font-size: 16px;
+    box-sizing: border-box;
+    height: 46px;
+    padding: 0 12px;
+  }
+
+  .custom-field-row select {
+    background: white;
+    cursor: pointer;
   }
 
   .custom-field-row textarea {
+    height: auto;
     min-height: 60px;
+    padding: 12px;
   }
 
   .remove-field-btn {

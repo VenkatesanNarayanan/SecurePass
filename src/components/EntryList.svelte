@@ -3,9 +3,10 @@
     entries: any[];
     onViewEntry: (entry: any) => void;
     onEditEntry: (entry: any) => void;
+    groupByCategory?: boolean;
   }
 
-  let { entries, onViewEntry, onEditEntry }: Props = $props();
+  let { entries, onViewEntry, onEditEntry, groupByCategory = false }: Props = $props();
 
   function getCategoryIcon(category: string): string {
     const icons: Record<string, string> = {
@@ -23,6 +24,40 @@
     const date = new Date(dateString);
     return date.toLocaleDateString();
   }
+
+  const CATEGORY_ORDER = ['web-app', 'ssh-server', 'bank-financial', 'email', 'wi-fi', 'generic'];
+
+  const groupedEntries = $derived.by(() => {
+    if (!groupByCategory) return [];
+
+    const map = new Map<string, any[]>();
+    for (const entry of entries) {
+      const cat = entry.category ?? 'generic';
+      if (!map.has(cat)) map.set(cat, []);
+      map.get(cat)!.push(entry);
+    }
+
+    const knownGroups = CATEGORY_ORDER
+      .filter(cat => map.has(cat))
+      .map(cat => ({
+        category: cat,
+        icon: getCategoryIcon(cat),
+        label: cat.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+        entries: map.get(cat)!
+      }));
+
+    const customGroups = [...map.keys()]
+      .filter(cat => !CATEGORY_ORDER.includes(cat))
+      .sort()
+      .map(cat => ({
+        category: cat,
+        icon: getCategoryIcon(cat),
+        label: cat.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+        entries: map.get(cat)!
+      }));
+
+    return [...knownGroups, ...customGroups];
+  });
 </script>
 
 <div class="entry-list">
@@ -31,6 +66,70 @@
       <div class="empty-icon">📝</div>
       <h3>No entries found</h3>
       <p>Create your first password entry to get started.</p>
+    </div>
+  {:else if groupByCategory}
+    <div class="entry-list-grouped">
+      {#each groupedEntries as group (group.category)}
+        <section class="category-section">
+          <header class="category-header">
+            <span class="category-header-icon">{group.icon}</span>
+            <h2 class="category-header-label">{group.label}</h2>
+            <span class="category-header-count">{group.entries.length}</span>
+          </header>
+          <div class="entries-grid">
+            {#each group.entries as entry (entry.id)}
+              <div
+                class="entry-card"
+                onclick={() => onViewEntry(entry)}
+                onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onViewEntry(entry)}
+                role="button"
+                tabindex="0"
+              >
+                <div class="entry-header">
+                  <div class="entry-icon">
+                    {getCategoryIcon(entry.category)}
+                  </div>
+                  <div class="entry-meta">
+                    <span class="category">{entry.category.replace('-', ' ')}</span>
+                    <span class="date">{formatDate(entry.updated_at)}</span>
+                  </div>
+                </div>
+
+                <div class="entry-content">
+                  <h4 class="entry-title">{entry.title}</h4>
+                  {#if entry.tags && entry.tags.length > 0}
+                    <div class="entry-tags">
+                      {#each entry.tags.slice(0, 3) as tag}
+                        <span class="tag">{tag}</span>
+                      {/each}
+                      {#if entry.tags.length > 3}
+                        <span class="tag more">+{entry.tags.length - 3}</span>
+                      {/if}
+                    </div>
+                  {/if}
+                  {#if entry.notes}
+                    <p class="entry-notes">{entry.notes}</p>
+                  {/if}
+                </div>
+
+                <div class="entry-footer">
+                  <span class="field-count">
+                    {entry.field_count} fields
+                  </span>
+                  <div class="entry-actions">
+                    <button class="view-btn" onclick={(event) => { event.stopPropagation(); onViewEntry(entry); }}>
+                      👁️ View
+                    </button>
+                    <button class="edit-btn" onclick={(event) => { event.stopPropagation(); onEditEntry(entry); }}>
+                      ✏️ Edit
+                    </button>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </section>
+      {/each}
     </div>
   {:else}
     <div class="entries-grid">
@@ -113,6 +212,50 @@
   .empty-state p {
     margin: 0;
     font-size: 0.875rem;
+  }
+
+  .entry-list-grouped {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .category-section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .category-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #e2e8f0;
+  }
+
+  .category-header-icon {
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+
+  .category-header-label {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #2d3748;
+    flex: 1;
+  }
+
+  .category-header-count {
+    background: #edf2f7;
+    color: #4a5568;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    min-width: 24px;
+    text-align: center;
   }
 
   .entries-grid {

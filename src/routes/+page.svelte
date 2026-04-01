@@ -9,7 +9,11 @@
   let loading = $state(true);
 
   // Auto-lock settings
-  const AUTO_LOCK_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
+  function getAutoLockTimeout(): number {
+    const stored = localStorage.getItem("sp_auto_lock_timeout");
+    const minutes = stored ? parseInt(stored, 10) : 5;
+    return minutes * 60 * 1000;
+  }
   let autoLockTimer = $state<ReturnType<typeof setTimeout> | null>(null);
   let lastActivity = $state(Date.now());
 
@@ -51,7 +55,7 @@
         console.log("Auto-locking vault due to inactivity");
         await handleLock();
       }
-    }, AUTO_LOCK_TIMEOUT);
+    }, getAutoLockTimeout());
   }
 
   function clearAutoLockTimer() {

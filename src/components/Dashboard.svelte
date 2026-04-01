@@ -298,6 +298,7 @@
          entries={entries}
          onViewEntry={handleViewEntry}
          onEditEntry={handleEditEntry}
+         groupByCategory={!searchQuery && !selectedCategory}
        />
     {/if}
   </main>

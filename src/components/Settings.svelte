@@ -14,16 +14,17 @@
   let error = $state("");
   let success = $state("");
 
+  const STORAGE_KEYS = {
+    autoLockTimeout: "sp_auto_lock_timeout",
+    clipboardTimeout: "sp_clipboard_timeout",
+  };
+
   // Load current settings on mount
-  async function loadSettings() {
-    try {
-      // For now, we'll use default values since we don't have persistent settings yet
-      // In a future version, we could store these in the vault metadata
-      autoLockTimeout = 5;
-      clipboardTimeout = 30;
-    } catch (err) {
-      console.error("Failed to load settings:", err);
-    }
+  function loadSettings() {
+    const storedAutoLock = localStorage.getItem(STORAGE_KEYS.autoLockTimeout);
+    const storedClipboard = localStorage.getItem(STORAGE_KEYS.clipboardTimeout);
+    if (storedAutoLock) autoLockTimeout = parseInt(storedAutoLock, 10);
+    if (storedClipboard) clipboardTimeout = parseInt(storedClipboard, 10);
   }
 
   // Save settings
@@ -33,21 +34,18 @@
     success = "";
 
     try {
-      // For now, we'll just validate the settings
-      // In a future version, we could save these to vault metadata or a separate settings file
-
       if (autoLockTimeout < 1 || autoLockTimeout > 60) {
         throw new Error("Auto-lock timeout must be between 1 and 60 minutes");
       }
-
       if (clipboardTimeout < 5 || clipboardTimeout > 300) {
         throw new Error("Clipboard timeout must be between 5 and 300 seconds");
       }
 
-      // Here we would save the settings, but for now we'll just show success
+      localStorage.setItem(STORAGE_KEYS.autoLockTimeout, String(autoLockTimeout));
+      localStorage.setItem(STORAGE_KEYS.clipboardTimeout, String(clipboardTimeout));
+
       success = "Settings saved successfully!";
       setTimeout(() => success = "", 3000);
-
     } catch (err) {
       error = err instanceof Error ? err.message : "Failed to save settings";
     } finally {

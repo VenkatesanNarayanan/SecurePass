@@ -56,7 +56,7 @@
         } catch (error) {
           console.error("Failed to clear clipboard:", error);
         }
-      }, 30000); // 30 seconds
+      }, (parseInt(localStorage.getItem("sp_clipboard_timeout") || "30", 10)) * 1000);
 
     } catch (error) {
       console.error("Failed to copy to clipboard:", error);

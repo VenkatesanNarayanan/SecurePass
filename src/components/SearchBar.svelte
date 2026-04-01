@@ -69,12 +69,13 @@
 
   .search-input {
     width: 100%;
-    padding: 12px 40px 12px 40px;
+    padding: 0 40px;
     border: 2px solid #e1e5e9;
     border-radius: 6px;
     font-size: 16px;
     transition: border-color 0.2s;
     box-sizing: border-box;
+    height: 46px;
   }
 
   .search-input:focus {
@@ -108,7 +109,7 @@
   }
 
   .category-filter {
-    padding: 12px;
+    padding: 0 12px;
     border: 2px solid #e1e5e9;
     border-radius: 6px;
     background: white;
@@ -117,6 +118,8 @@
     cursor: pointer;
     transition: border-color 0.2s;
     min-width: 160px;
+    box-sizing: border-box;
+    height: 46px;
   }
 
   .category-filter:focus {
