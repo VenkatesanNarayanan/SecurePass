@@ -28,7 +28,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: 'npm'
 
       # Install Rust (Backend)
@@ -62,6 +62,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SKIP_CODESIGNING: "true"
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "SecurePass ${{ github.ref_name }}"
