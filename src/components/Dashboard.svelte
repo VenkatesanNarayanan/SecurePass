@@ -18,16 +18,16 @@
   let { vaultStatus, onLock }: Props = $props();
 
   // State
-  let entries = $state([]);
-  let categories = $state([]);
-  let tags = $state([]);
+  let entries = $state<any[]>([]);
+  let categories = $state<any[]>([]);
+  let tags = $state<any[]>([]);
   let searchQuery = $state("");
   let selectedCategory = $state("");
   let showEntryForm = $state(false);
   let showEntryView = $state(false);
   let showSettings = $state(false);
-  let editingEntry = $state(null);
-  let viewingEntry = $state(null);
+  let editingEntry = $state<any>(null);
+  let viewingEntry = $state<any>(null);
   let loading = $state(false);
 
   // Load data on mount
@@ -35,9 +35,9 @@
     loading = true;
     try {
       [entries, categories, tags] = await Promise.all([
-        invoke("get_entries"),
-        invoke("get_categories"),
-        invoke("get_tags")
+        invoke<any[]>("get_entries"),
+        invoke<any[]>("get_categories"),
+        invoke<any[]>("get_tags")
       ]);
     } catch (error) {
       console.error("Failed to load data:", error);
@@ -50,7 +50,7 @@
   async function handleSearch() {
     loading = true;
     try {
-      entries = await invoke("search_entries", {
+      entries = await invoke<any[]>("search_entries", {
         request: {
           query: searchQuery,
           categoryFilter: selectedCategory || null
@@ -72,7 +72,7 @@
   // Handle entry viewing
   async function handleViewEntry(entry: any) {
     try {
-      const fullEntry = await invoke("get_entry", { request: { entryId: entry.id } });
+      const fullEntry = await invoke<any>("get_entry", { request: { entryId: entry.id } });
       viewingEntry = fullEntry;
       showEntryView = true;
     } catch (error) {
@@ -83,7 +83,7 @@
   // Handle entry editing
   async function handleEditEntry(entry: any) {
     try {
-      const fullEntry = await invoke("get_entry", { request: { entryId: entry.id } });
+      const fullEntry = await invoke<any>("get_entry", { request: { entryId: entry.id } });
       editingEntry = fullEntry;
       showEntryForm = true;
     } catch (error) {

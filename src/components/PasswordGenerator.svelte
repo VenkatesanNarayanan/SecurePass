@@ -393,6 +393,7 @@
     background: #e2e8f0;
     outline: none;
     -webkit-appearance: none;
+    appearance: none;
   }
 
   .option-group input[type="range"]::-webkit-slider-thumb {

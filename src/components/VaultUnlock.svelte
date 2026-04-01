@@ -10,18 +10,24 @@
   let loading = $state(false);
   let error = $state("");
 
+  interface VaultStatus {
+    has_vault: boolean;
+    is_locked: boolean;
+    entry_count: number;
+  }
+
   // Check if vault exists
   let vaultExists = $state(false);
-  let vaultStatus = $state(null);
+  let vaultStatus = $state<VaultStatus | null>(null);
 
   async function checkVaultStatus() {
     try {
-      vaultStatus = await invoke("get_vault_status");
+      vaultStatus = await invoke<VaultStatus>("get_vault_status");
       vaultExists = vaultStatus.has_vault;
     } catch (err) {
       console.error("Failed to check vault status:", err);
       // If Tauri is not available, show a helpful message
-      if (err.message?.includes("invoke")) {
+      if ((err as any)?.message?.includes("invoke")) {
         error = "Tauri API not available. Please run 'npm run tauri dev' to start the SecurePass application.";
       }
     }

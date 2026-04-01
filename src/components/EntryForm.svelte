@@ -10,16 +10,23 @@
 
   let { entry = null, categories, onClose }: Props = $props();
 
+  interface CustomField {
+    name: string;
+    type: string;
+    value: string;
+    id: number;
+  }
+
   // Form state
   let selectedCategory = $state(entry?.category || "web-app");
   let title = $state(entry?.title || "");
   let tags = $state(entry?.tags || []);
   let notes = $state(entry?.notes || "");
-  let customFields = $state([]);
+  let customFields = $state<CustomField[]>([]);
   let loading = $state(false);
   let error = $state("");
   let showPasswordGenerator = $state(false);
-  let passwordGeneratorTarget = $state(null); // Will store which field is being edited
+  let passwordGeneratorTarget = $state<string | null>(null); // Will store which field is being edited
 
   // Category templates
   const CATEGORY_TEMPLATES = {
@@ -63,7 +70,7 @@
   };
 
   // Field values
-  let fieldValues = $state({});
+  let fieldValues = $state<Record<string, string>>({});
 
   // Initialize form data
   $effect(() => {
@@ -79,8 +86,8 @@
             fieldValues = Object.fromEntries(entry.fields.map((f: any) => [f.name, f.value]));
 
             // Populate custom fields (fields not in the original entry's template)
-            const entryTemplate = CATEGORY_TEMPLATES[entry.category] || CATEGORY_TEMPLATES["generic"];
-            const templateFieldNames = entryTemplate.map(f => f.name);
+            const entryTemplate = CATEGORY_TEMPLATES[entry.category as keyof typeof CATEGORY_TEMPLATES] || CATEGORY_TEMPLATES["generic"];
+            const templateFieldNames = entryTemplate.map((f: { name: string }) => f.name);
             customFields = entry.fields
                 .filter((f: any) => !templateFieldNames.includes(f.name))
                 .map((f: any, index: number) => ({
@@ -107,7 +114,7 @@
   }
 
   function getCurrentTemplate() {
-    return CATEGORY_TEMPLATES[selectedCategory] || CATEGORY_TEMPLATES["generic"];
+    return CATEGORY_TEMPLATES[selectedCategory as keyof typeof CATEGORY_TEMPLATES] || CATEGORY_TEMPLATES["generic"];
   }
 
   function addCustomField() {
@@ -171,7 +178,7 @@
         category: selectedCategory,
         title: title.trim(),
         fields,
-        tags: tags.filter(tag => tag.trim()),
+        tags: tags.filter((tag: string) => tag.trim()),
         notes: notes.trim()
       };
 
@@ -279,7 +286,7 @@
             type="text"
             bind:value={tags}
             placeholder="work, personal, important"
-              oninput={(e) => tags = e.target.value.split(',').map(t => t.trim())}
+              oninput={(e) => tags = (e.target as HTMLInputElement).value.split(',').map(t => t.trim())}
           />
         </div>
 
@@ -359,11 +366,11 @@
               type="text"
               placeholder="Field name"
               bind:value={customField.name}
-              oninput={(e) => updateCustomField(index, 'name', e.target.value)}
+              oninput={(e) => updateCustomField(index, 'name', (e.target as HTMLInputElement).value)}
             />
             <select
               bind:value={customField.type}
-              onchange={(e) => updateCustomField(index, 'type', e.target.value)}
+              onchange={(e) => updateCustomField(index, 'type', (e.target as HTMLSelectElement).value)}
             >
               <option value="text">Text</option>
               <option value="password">Password</option>
@@ -375,7 +382,7 @@
                   type="password"
                   placeholder="Value"
                   bind:value={customField.value}
-                  oninput={(e) => updateCustomField(index, 'value', e.target.value)}
+                  oninput={(e) => updateCustomField(index, 'value', (e.target as HTMLInputElement | HTMLTextAreaElement).value)}
                 />
                 <button
                   type="button"
@@ -390,7 +397,7 @@
               <textarea
                 placeholder="Value"
                 bind:value={customField.value}
-                oninput={(e) => updateCustomField(index, 'value', e.target.value)}
+                oninput={(e) => updateCustomField(index, 'value', (e.target as HTMLTextAreaElement).value)}
                 rows="2"
               ></textarea>
             {:else}
@@ -398,7 +405,7 @@
                 type="text"
                 placeholder="Value"
                 bind:value={customField.value}
-                oninput={(e) => updateCustomField(index, 'value', e.target.value)}
+                oninput={(e) => updateCustomField(index, 'value', (e.target as HTMLInputElement).value)}
               />
             {/if}
             <button type="button" class="remove-field-btn" onclick={() => removeCustomField(index)}>

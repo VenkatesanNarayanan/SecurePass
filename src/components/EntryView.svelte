@@ -12,7 +12,7 @@
   let { entry, onClose, onEdit, onDelete }: Props = $props();
 
   let copyStatus = $state<Record<string, boolean>>({});
-  let copyTimeouts = $state<Record<string, number>>({});
+  let copyTimeouts = $state<Record<string, ReturnType<typeof setTimeout>>>({});
   let showDeleteConfirm = $state(false);
   let deleting = $state(false);
 
@@ -165,11 +165,11 @@
       </div>
 
       <!-- Fields -->
-      {#if entry.fields.filter(field => field.value && field.value.trim() !== '').length > 0}
+      {#if entry.fields.filter((field: any) => field.value && field.value.trim() !== '').length > 0}
         <div class="fields-section">
           <h3>Fields</h3>
           <div class="fields-grid">
-            {#each entry.fields.filter(field => field.value && field.value.trim() !== '') as field}
+            {#each entry.fields.filter((field: any) => field.value && field.value.trim() !== '') as field}
             <div class="field-item">
               <span class="label">{field.name}</span>
               <div class="field-value-container">

@@ -10,7 +10,7 @@
 
   // Auto-lock settings
   const AUTO_LOCK_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
-  let autoLockTimer = $state(null);
+  let autoLockTimer = $state<ReturnType<typeof setTimeout> | null>(null);
   let lastActivity = $state(Date.now());
 
   // Check vault status on mount

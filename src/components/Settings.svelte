@@ -256,6 +256,7 @@
     background: #e2e8f0;
     outline: none;
     -webkit-appearance: none;
+    appearance: none;
     margin: 8px 0;
   }
 
