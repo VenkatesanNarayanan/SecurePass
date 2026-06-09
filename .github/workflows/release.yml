@@ -69,3 +69,35 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeBundledTauri: true
+
+      # macOS: wrap the .app in a .pkg with a post-install script that removes
+      # the quarantine flag automatically, so users never need to run xattr manually.
+      # They still need to right-click → Open the .pkg once (standard unsigned-app UX).
+      - name: Create macOS PKG installer
+        if: matrix.platform == 'macos-latest'
+        run: |
+          APP_PATH=$(find src-tauri/target/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
+          VERSION=$(node -p "require('./package.json').version")
+
+          mkdir -p _pkg_staging/Applications _pkg_scripts
+
+          cp -r "$APP_PATH" _pkg_staging/Applications/
+
+          printf '#!/bin/bash\nxattr -dr com.apple.quarantine "/Applications/SecurePass.app" 2>/dev/null || true\n' \
+            > _pkg_scripts/postinstall
+          chmod +x _pkg_scripts/postinstall
+
+          pkgbuild \
+            --root _pkg_staging \
+            --scripts _pkg_scripts \
+            --identifier com.securepass.app \
+            --version "$VERSION" \
+            "SecurePass_${VERSION}_macos.pkg"
+
+      - name: Upload PKG to GitHub release
+        if: matrix.platform == 'macos-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release upload "${{ github.ref_name }}" "SecurePass_${VERSION}_macos.pkg" --clobber

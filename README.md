@@ -1,5 +1,7 @@
 # 🔐 SecurePass - Encrypted Password Manager
 
+“Your passwords. Your device. Your cloud.”
+
 A secure, cross-platform password manager built with Rust and Svelte, featuring military-grade encryption and a modern, intuitive interface.
 
 ![SecurePass](https://img.shields.io/badge/SecurePass-1.0.0-blue?style=for-the-badge)
