@@ -6,6 +6,7 @@
   import EntryView from "./EntryView.svelte";
   import SearchBar from "./SearchBar.svelte";
   import Settings from "./Settings.svelte";
+  import ConflictResolutionModal from "./ConflictResolutionModal.svelte";
 
   const dispatch = createEventDispatcher();
 
@@ -29,6 +30,15 @@
   let editingEntry = $state<any>(null);
   let viewingEntry = $state<any>(null);
   let loading = $state(false);
+
+  // Sync state
+  let syncStatus = $state<{ connected: boolean; lastSync: string | null; hasPendingConflicts: boolean } | null>(null);
+  let syncing = $state(false);
+  let syncError = $state("");
+  let pendingConflicts = $state<any[]>([]);
+  let showConflictModal = $state(false);
+  let needsSync = $state(false);
+  let syncCheckReason = $state<{ localChanged: boolean; remoteChanged: boolean }>({ localChanged: false, remoteChanged: false });
 
   // Load data on mount
   async function loadData() {
@@ -196,8 +206,76 @@
     }
   }
 
+  // Sync helpers
+  async function loadSyncStatus() {
+    try {
+      syncStatus = await invoke("get_sync_status");
+      if (syncStatus?.hasPendingConflicts) {
+        syncError = "Unresolved sync conflicts — click Resolve to fix them.";
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  async function checkSyncNeeded() {
+    if (!syncStatus?.connected) return;
+    try {
+      const result: any = await invoke("check_sync_needed");
+      needsSync = result.needsSync;
+      syncCheckReason = { localChanged: result.localChanged, remoteChanged: result.remoteChanged };
+    } catch { /* silent — network may be unavailable */ }
+  }
+
+  async function handleSync() {
+    syncing = true;
+    syncError = "";
+    try {
+      const result: any = await invoke("sync_vault");
+      if (result.status === "conflicts") {
+        pendingConflicts = result.conflicts;
+        showConflictModal = true;
+      } else {
+        needsSync = false;
+        await loadData();
+        await loadSyncStatus();
+      }
+    } catch (e) {
+      syncError = e instanceof Error ? e.message : String(e);
+    } finally {
+      syncing = false;
+    }
+  }
+
+  async function handleConflictsResolved() {
+    showConflictModal = false;
+    pendingConflicts = [];
+    syncError = "";
+    needsSync = false;
+    await loadData();
+    await loadSyncStatus();
+  }
+
+  function formatLastSync(iso: string | null) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    const diffMs = Date.now() - d.getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return d.toLocaleDateString();
+  }
+
   // Initialize
   loadData();
+  loadSyncStatus().then(() => checkSyncNeeded());
+
+  // Poll Drive for remote changes every 2 minutes when connected.
+  $effect(() => {
+    if (!syncStatus?.connected) return;
+    const id = setInterval(checkSyncNeeded, 2 * 60 * 1000);
+    return () => clearInterval(id);
+  });
 
   // Keyboard shortcuts
   function handleKeydown(event: KeyboardEvent) {
@@ -262,6 +340,33 @@
       <button class="btn-outline" onclick={() => showSettings = true} title="Settings">
         ⚙️ Settings
       </button>
+      {#if syncStatus?.connected}
+        <button
+          class="btn-sync"
+          class:needs-sync={needsSync && !syncing}
+          onclick={handleSync}
+          disabled={syncing}
+          title={syncStatus.lastSync
+            ? `Last synced: ${new Date(syncStatus.lastSync).toLocaleString()}${syncCheckReason.remoteChanged ? ' · Remote has changes' : ''}${syncCheckReason.localChanged ? ' · Local has changes' : ''}`
+            : 'Never synced'}
+        >
+          {#if syncing}
+            <span class="sync-spin">⟳</span> Syncing…
+          {:else if needsSync}
+            ↑↓ Sync needed
+            <span class="needs-sync-dot"></span>
+          {:else if syncStatus.lastSync}
+            ☁️ {formatLastSync(syncStatus.lastSync)}
+          {:else}
+            ☁️ Sync
+          {/if}
+        </button>
+        {#if syncStatus?.hasPendingConflicts}
+          <button class="btn-outline resolve-btn" onclick={() => showConflictModal = true}>
+            ⚠️ Resolve
+          </button>
+        {/if}
+      {/if}
       <button class="btn-outline" onclick={handleExport} title="Export Vault">
         📤 Export
       </button>
@@ -330,6 +435,15 @@
     <!-- Settings Modal -->
     {#if showSettings}
         <Settings onClose={() => showSettings = false} />
+    {/if}
+
+    <!-- Conflict Resolution Modal -->
+    {#if showConflictModal && pendingConflicts.length > 0}
+        <ConflictResolutionModal
+          conflicts={pendingConflicts}
+          onResolved={handleConflictsResolved}
+          onCancel={() => showConflictModal = false}
+        />
     {/if}
  </div>
 
@@ -465,6 +579,58 @@
     background: #f7fafc;
     border-color: #cbd5e0;
   }
+
+  .btn-sync {
+    background: white;
+    color: #4a5568;
+    border: 1px solid #e2e8f0;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .btn-sync:hover:not(:disabled) {
+    background: #f7fafc;
+    border-color: #cbd5e0;
+  }
+
+  .btn-sync:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .btn-sync.needs-sync {
+    background: #fffbeb;
+    border-color: #f6ad55;
+    color: #c05621;
+    font-weight: 600;
+  }
+
+  .btn-sync.needs-sync:hover:not(:disabled) { background: #fef3c7; }
+
+  .needs-sync-dot {
+    width: 7px;
+    height: 7px;
+    background: #ed8936;
+    border-radius: 50%;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.8); }
+  }
+
+  .sync-spin {
+    display: inline-block;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .resolve-btn { color: #c53030; border-color: #feb2b2; }
 
   @media (max-width: 768px) {
     .dashboard-header,

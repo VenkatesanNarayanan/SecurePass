@@ -4,16 +4,23 @@ use std::sync::Mutex;
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
-
+use chrono::Utc;
 
 use crate::crypto::CryptoManager;
 use crate::vault::{Vault, Entry, FieldType, VaultMetadata};
+use crate::sync;
 
 /// App state containing the unlocked vault and crypto manager
 pub struct AppState {
     pub vault: Option<Vault>,
     pub crypto: Option<CryptoManager>,
     pub is_locked: bool,
+    /// Partially-merged vault waiting for conflict resolution.
+    pub pending_sync_merge: Option<Vault>,
+    /// Conflicted entry pairs (local, remote) to be shown to the user.
+    pub pending_conflicts: Vec<(Entry, Entry)>,
+    /// Drive file ID kept here during conflict resolution so we can finalize the upload.
+    pub pending_drive_file_id: Option<String>,
 }
 
 impl Default for AppState {
@@ -22,6 +29,9 @@ impl Default for AppState {
             vault: None,
             crypto: None,
             is_locked: true,
+            pending_sync_merge: None,
+            pending_conflicts: Vec::new(),
+            pending_drive_file_id: None,
         }
     }
 }
@@ -770,6 +780,355 @@ pub async fn import_from_password_locker(
 
     Ok(count)
 }
+
+// ── Cloud storage / sync commands ────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatusResponse {
+    pub connected: bool,
+    pub last_sync: Option<chrono::DateTime<Utc>>,
+    pub has_pending_conflicts: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictInfo {
+    pub local_entry: serde_json::Value,
+    pub remote_entry: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncResult {
+    pub status: String,
+    pub conflicts: Vec<ConflictInfo>,
+    pub entries_added: usize,
+    pub entries_updated: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictResolution {
+    pub entry_id: String,
+    pub keep: String, // "local" or "remote"
+}
+
+fn entry_to_json(entry: &Entry) -> serde_json::Value {
+    let fields: Vec<serde_json::Value> = entry.fields.iter().map(|f| {
+        let value = String::from_utf8(f.value_encrypted.clone()).unwrap_or_default();
+        let type_str = match f.field_type {
+            FieldType::Password => "password",
+            FieldType::LongText => "long_text",
+            FieldType::Text => "text",
+        };
+        serde_json::json!({ "name": f.name, "fieldType": type_str, "value": value })
+    }).collect();
+
+    serde_json::json!({
+        "id": entry.id,
+        "title": entry.title,
+        "category": entry.category,
+        "notes": entry.notes,
+        "tags": entry.tags,
+        "fields": fields,
+        "updatedAt": entry.updated_at,
+    })
+}
+
+/// Return the current Google Drive connection status.
+#[command]
+pub async fn get_sync_status(
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<SyncStatusResponse, String> {
+    let has_pending = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        !s.pending_conflicts.is_empty()
+    };
+    let sync_state = sync::load_sync_state();
+    Ok(SyncStatusResponse {
+        connected: sync_state.connected,
+        last_sync: sync_state.last_sync,
+        has_pending_conflicts: has_pending,
+    })
+}
+
+/// Start the Google Drive OAuth flow. Opens the user's browser; blocks until
+/// they complete sign-in (timeout 5 min).
+#[command]
+pub async fn connect_google_drive(
+    _state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    sync::start_oauth_flow().await?;
+    let mut sync_state = sync::load_sync_state();
+    sync_state.connected = true;
+    sync::save_sync_state(&sync_state)?;
+    Ok(())
+}
+
+/// Remove stored tokens and disconnect from Google Drive.
+#[command]
+pub async fn disconnect_google_drive(
+    _state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    sync::clear_cloud_data()
+}
+
+/// Sync the local vault with Google Drive.
+///
+/// Returns `status = "synced"` when everything merged automatically, or
+/// `status = "conflicts"` with a list of conflicting entries for the user
+/// to resolve via `resolve_conflicts`.
+#[command]
+pub async fn sync_vault(
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<SyncResult, String> {
+    // Extract what we need from locked state, then release the lock before
+    // making async network calls.
+    let (key_bytes, local_vault, sync_state) = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        if s.is_locked || s.vault.is_none() {
+            return Err("Vault is locked".to_string());
+        }
+        let sync_state = sync::load_sync_state();
+        if !sync_state.connected {
+            return Err("Not connected to Google Drive. Connect in Settings first.".to_string());
+        }
+        (
+            s.crypto.as_ref().unwrap().get_key_bytes(),
+            s.vault.as_ref().unwrap().clone(),
+            sync_state,
+        )
+    };
+
+    let crypto = CryptoManager::from_key_bytes(&key_bytes);
+    let access_token = sync::get_valid_access_token().await?;
+    let file_id = sync::find_drive_file(&access_token).await?;
+
+    // ── First sync: nothing on Drive yet ────────────────────────────────────
+    if file_id.is_none() {
+        let vault_bytes = sync::encrypt_vault_bytes(&local_vault, &crypto)?;
+        let new_id = sync::upload_vault_to_drive(&access_token, vault_bytes, None).await?;
+
+        let mut new_state = sync_state;
+        new_state.drive_file_id = Some(new_id);
+        new_state.last_sync = Some(Utc::now());
+        sync::save_sync_state(&new_state)?;
+
+        return Ok(SyncResult {
+            status: "synced".to_string(),
+            conflicts: vec![],
+            entries_added: local_vault.entries.len(),
+            entries_updated: 0,
+        });
+    }
+
+    // ── Download + decrypt remote vault ─────────────────────────────────────
+    let file_id = file_id.unwrap();
+    let remote_bytes = sync::download_vault_from_drive(&access_token, &file_id).await?;
+    let remote_vault = sync::decrypt_vault_bytes(&remote_bytes, &crypto)?;
+
+    // ── Merge ────────────────────────────────────────────────────────────────
+    let merge = sync::merge_vaults(&local_vault, &remote_vault, sync_state.last_sync);
+
+    if merge.raw_conflicts.is_empty() {
+        // No conflicts: finalize immediately.
+        let vault_bytes = sync::encrypt_vault_bytes(&merge.merged, &crypto)?;
+        sync::upload_vault_to_drive(&access_token, vault_bytes, Some(&file_id)).await?;
+
+        let (added, updated) = (merge.entries_added, merge.entries_updated);
+        let merged_vault = merge.merged;
+
+        {
+            let mut s = state.lock().map_err(|e| e.to_string())?;
+            save_vault(&merged_vault, s.crypto.as_ref().unwrap())
+                .map_err(|e| format!("Failed to save merged vault: {}", e))?;
+            s.vault = Some(merged_vault);
+        }
+
+        let mut new_state = sync_state;
+        new_state.drive_file_id = Some(file_id);
+        new_state.last_sync = Some(Utc::now());
+        sync::save_sync_state(&new_state)?;
+
+        Ok(SyncResult { status: "synced".to_string(), conflicts: vec![], entries_added: added, entries_updated: updated })
+    } else {
+        // Has conflicts: stash pending state and return conflict info to the frontend.
+        let conflicts: Vec<ConflictInfo> = merge.raw_conflicts.iter()
+            .map(|(l, r)| ConflictInfo {
+                local_entry: entry_to_json(l),
+                remote_entry: entry_to_json(r),
+            })
+            .collect();
+
+        {
+            let mut s = state.lock().map_err(|e| e.to_string())?;
+            s.pending_sync_merge = Some(merge.merged);
+            s.pending_conflicts = merge.raw_conflicts;
+            s.pending_drive_file_id = Some(file_id);
+        }
+
+        Ok(SyncResult {
+            status: "conflicts".to_string(),
+            conflicts,
+            entries_added: merge.entries_added,
+            entries_updated: merge.entries_updated,
+        })
+    }
+}
+
+/// Check whether a sync is needed without downloading the full vault.
+///
+/// Compares the local vault's `updated_at` and the Drive file's `modifiedTime`
+/// against `last_sync`. Returns immediately (one lightweight Drive metadata call).
+#[command]
+pub async fn check_sync_needed(
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<serde_json::Value, String> {
+    let (vault_updated_at, sync_state) = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        if s.is_locked || s.vault.is_none() {
+            return Err("Vault is locked".to_string());
+        }
+        let ss = sync::load_sync_state();
+        if !ss.connected {
+            return Ok(serde_json::json!({ "needsSync": false, "localChanged": false, "remoteChanged": false }));
+        }
+        (s.vault.as_ref().unwrap().updated_at, ss)
+    };
+
+    let last_sync = sync_state.last_sync.unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
+    let local_changed = vault_updated_at > last_sync;
+
+    // No file ID yet → first-time sync is always needed.
+    let Some(file_id) = sync_state.drive_file_id else {
+        return Ok(serde_json::json!({ "needsSync": true, "localChanged": true, "remoteChanged": false }));
+    };
+
+    let access_token = sync::get_valid_access_token().await?;
+    let remote_modified = sync::get_drive_file_modified_time(&access_token, &file_id).await?;
+    let remote_changed = remote_modified.map(|t| t > last_sync).unwrap_or(false);
+
+    Ok(serde_json::json!({
+        "needsSync": local_changed || remote_changed,
+        "localChanged": local_changed,
+        "remoteChanged": remote_changed,
+    }))
+}
+
+/// Apply the user's conflict resolutions and complete the sync.
+///
+/// Each resolution specifies an `entryId` and `keep: "local" | "remote"`.
+#[command]
+pub async fn resolve_conflicts(
+    state: tauri::State<'_, Mutex<AppState>>,
+    resolutions: Vec<ConflictResolution>,
+) -> Result<(), String> {
+    let (key_bytes, pending_merge, pending_conflicts, drive_file_id) = {
+        let mut s = state.lock().map_err(|e| e.to_string())?;
+        let merge = s.pending_sync_merge.take()
+            .ok_or("No pending sync to resolve")?;
+        let conflicts = std::mem::take(&mut s.pending_conflicts);
+        let fid = s.pending_drive_file_id.take()
+            .ok_or("No pending Drive file ID")?;
+        let key = s.crypto.as_ref().unwrap().get_key_bytes();
+        (key, merge, conflicts, fid)
+    };
+
+    let mut merged = pending_merge;
+
+    // Apply each resolution by adding the chosen entry version to the merged vault.
+    for res in &resolutions {
+        let entry_uuid = Uuid::parse_str(&res.entry_id)
+            .map_err(|e| format!("Invalid entry ID: {}", e))?;
+
+        if let Some((local_e, remote_e)) = pending_conflicts.iter().find(|(l, _)| l.id == entry_uuid) {
+            let chosen = if res.keep == "local" { local_e } else { remote_e };
+            merged.entries.push(chosen.clone());
+        }
+    }
+    merged.updated_at = Utc::now();
+
+    let crypto = CryptoManager::from_key_bytes(&key_bytes);
+    let vault_bytes = sync::encrypt_vault_bytes(&merged, &crypto)?;
+    let access_token = sync::get_valid_access_token().await?;
+    sync::upload_vault_to_drive(&access_token, vault_bytes, Some(&drive_file_id)).await?;
+
+    {
+        let mut s = state.lock().map_err(|e| e.to_string())?;
+        save_vault(&merged, s.crypto.as_ref().unwrap())
+            .map_err(|e| format!("Failed to save vault: {}", e))?;
+        s.vault = Some(merged);
+    }
+
+    let mut sync_state = sync::load_sync_state();
+    sync_state.drive_file_id = Some(drive_file_id);
+    sync_state.last_sync = Some(Utc::now());
+    sync::save_sync_state(&sync_state)?;
+
+    Ok(())
+}
+
+/// Restore a vault from Google Drive onto a device that has no local vault.
+///
+/// This is the Device-B first-launch path. It MUST be called after
+/// `connect_google_drive` (tokens already stored). It downloads the encrypted
+/// vault from Drive, extracts the salt embedded in the file, derives the
+/// decryption key from the user's master password + that salt, decrypts, saves
+/// locally, and marks the sync state as up-to-date.
+#[command]
+pub async fn restore_vault_from_drive(
+    state: tauri::State<'_, Mutex<AppState>>,
+    master_password: String,
+) -> Result<VaultMetadata, String> {
+    // Tokens must have been stored by connect_google_drive already.
+    let access_token = sync::get_valid_access_token().await?;
+
+    let file_id = sync::find_drive_file(&access_token)
+        .await?
+        .ok_or("No SecurePass vault found on Google Drive. Make sure you have synced at least once from your other device, then try again.")?;
+
+    let vault_bytes = sync::download_vault_from_drive(&access_token, &file_id).await?;
+
+    if vault_bytes.len() < 44 {
+        return Err("Vault file on Google Drive is too short — it may be corrupted.".to_string());
+    }
+
+    // The first 32 bytes of the file ARE the Argon2 salt used when the vault
+    // was originally created. We must use this salt (not generate a new one)
+    // so that key derivation produces the same key as the original device.
+    let salt: [u8; 32] = vault_bytes[0..32]
+        .try_into()
+        .map_err(|_| "Could not read salt from vault file")?;
+
+    let crypto = CryptoManager::new(&master_password, &salt)
+        .map_err(|e| format!("Failed to initialise encryption: {}", e))?;
+
+    // A wrong password will produce a wrong key and fail authentication here.
+    let vault = sync::decrypt_vault_bytes(&vault_bytes, &crypto)
+        .map_err(|_| "Incorrect master password or corrupted vault file.".to_string())?;
+
+    save_vault(&vault, &crypto)
+        .map_err(|e| format!("Failed to save vault locally: {}", e))?;
+
+    let mut sync_state = sync::load_sync_state();
+    sync_state.connected = true;
+    sync_state.drive_file_id = Some(file_id);
+    sync_state.last_sync = Some(Utc::now());
+    sync::save_sync_state(&sync_state)?;
+
+    let metadata = VaultMetadata::from(&vault);
+    {
+        let mut s = state.lock().map_err(|e| e.to_string())?;
+        s.vault = Some(vault);
+        s.crypto = Some(crypto);
+        s.is_locked = false;
+    }
+
+    Ok(metadata)
+}
+
+// ── Vault file helpers (used by non-sync commands above) ─────────────────────
 
 /// Load vault from a specific file path
 fn load_vault_from_path(file_path: &str, master_password: &str) -> Result<Vault, String> {

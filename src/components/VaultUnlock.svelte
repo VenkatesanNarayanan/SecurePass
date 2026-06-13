@@ -102,6 +102,46 @@
     confirmPassword = "";
     error = "";
   }
+
+  // ── Google Drive restore flow ──────────────────────────────────────────────
+  // Step 1: connect_google_drive  (opens browser, waits for OAuth)
+  // Step 2: restore_vault_from_drive(password)  (download + decrypt + save)
+
+  type DriveStep = 'idle' | 'connecting' | 'password' | 'restoring';
+  let driveStep = $state<DriveStep>('idle');
+  let drivePassword = $state('');
+  let driveError = $state('');
+
+  async function startDriveRestore() {
+    driveStep = 'connecting';
+    driveError = '';
+    try {
+      await invoke('connect_google_drive');
+      driveStep = 'password';
+    } catch (e) {
+      driveError = e instanceof Error ? e.message : String(e);
+      driveStep = 'idle';
+    }
+  }
+
+  async function handleDriveRestore() {
+    if (!drivePassword) { driveError = 'Enter your master password.'; return; }
+    driveStep = 'restoring';
+    driveError = '';
+    try {
+      await invoke('restore_vault_from_drive', { masterPassword: drivePassword });
+      dispatch('unlock');
+    } catch (e) {
+      driveError = e instanceof Error ? e.message : String(e);
+      driveStep = 'password';
+    }
+  }
+
+  function cancelDriveRestore() {
+    driveStep = 'idle';
+    drivePassword = '';
+    driveError = '';
+  }
 </script>
 
 <div class="unlock-container">
@@ -172,6 +212,60 @@
       <div class="security-notice">
         <p><strong>Security Notice:</strong> Your master password is used to encrypt all your data.
         Choose a strong, memorable password and keep it safe.</p>
+      </div>
+
+      <!-- Google Drive restore -->
+      <div class="drive-restore-section">
+        <div class="divider"><span>or</span></div>
+
+        {#if driveStep === 'idle'}
+          <button class="drive-btn" onclick={startDriveRestore}>
+            ☁️ Restore from Google Drive
+          </button>
+          <p class="drive-hint">Already use SecurePass on another device? Restore your vault here.</p>
+
+        {:else if driveStep === 'connecting'}
+          <div class="drive-connecting">
+            <span class="spinner"></span>
+            <span>Waiting for Google sign-in…</span>
+          </div>
+          <p class="drive-hint">Complete sign-in in your browser, then come back here.</p>
+
+        {:else if driveStep === 'password' || driveStep === 'restoring'}
+          <div class="drive-password-form">
+            <p class="drive-ready">Google Drive connected. Enter your master password to restore your vault.</p>
+            <div class="form-group">
+              <label for="drive-password">Master Password</label>
+              <input
+                id="drive-password"
+                type="password"
+                bind:value={drivePassword}
+                placeholder="Enter your master password"
+                disabled={driveStep === 'restoring'}
+                onkeydown={(e) => e.key === 'Enter' && handleDriveRestore()}
+              />
+            </div>
+            {#if driveError}
+              <div class="error-message">{driveError}</div>
+            {/if}
+            <div class="drive-actions">
+              <button class="btn-cancel" onclick={cancelDriveRestore} disabled={driveStep === 'restoring'}>
+                Cancel
+              </button>
+              <button class="drive-restore-btn" onclick={handleDriveRestore} disabled={driveStep === 'restoring'}>
+                {#if driveStep === 'restoring'}
+                  <span class="spinner"></span> Restoring…
+                {:else}
+                  Restore Vault
+                {/if}
+              </button>
+            </div>
+          </div>
+        {/if}
+
+        {#if driveStep === 'idle' && driveError}
+          <div class="error-message" style="margin-top:10px">{driveError}</div>
+        {/if}
       </div>
     {/if}
   </div>
@@ -336,6 +430,127 @@
     font-size: 14px;
     line-height: 1.4;
   }
+
+  .drive-restore-section {
+    margin-top: 24px;
+    text-align: center;
+  }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    color: #a0aec0;
+    font-size: 0.875rem;
+  }
+
+  .divider::before,
+  .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #e2e8f0;
+  }
+
+  .drive-btn {
+    width: 100%;
+    background: white;
+    color: #2d3748;
+    border: 2px solid #e2e8f0;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .drive-btn:hover {
+    border-color: #4285f4;
+    background: #f0f4ff;
+    color: #1a73e8;
+  }
+
+  .drive-hint {
+    margin: 10px 0 0;
+    font-size: 0.8rem;
+    color: #718096;
+  }
+
+  .drive-connecting {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 14px;
+    background: #ebf4ff;
+    border-radius: 8px;
+    color: #2b6cb0;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+
+  .drive-ready {
+    font-size: 0.875rem;
+    color: #2d3748;
+    margin: 0 0 16px;
+    text-align: left;
+    line-height: 1.4;
+  }
+
+  .drive-password-form {
+    text-align: left;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  .drive-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  .btn-cancel {
+    flex: 0 0 auto;
+    padding: 10px 16px;
+    background: #edf2f7;
+    color: #4a5568;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-cancel:hover:not(:disabled) { background: #e2e8f0; }
+  .btn-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .drive-restore-btn {
+    flex: 1;
+    background: #4285f4;
+    color: white;
+    border: none;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background 0.2s;
+  }
+
+  .drive-restore-btn:hover:not(:disabled) { background: #1a73e8; }
+  .drive-restore-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
   @media (max-width: 480px) {
     .unlock-card {

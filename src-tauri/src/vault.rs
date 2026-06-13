@@ -129,14 +129,24 @@ pub enum FieldType {
     LongText,
 }
 
+/// Tombstone left when an entry is deleted, used by the sync merge algorithm.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DeletedEntry {
+    pub id: Uuid,
+    pub deleted_at: DateTime<Utc>,
+}
+
 /// The main vault containing all entries
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Vault {
     pub entries: Vec<Entry>,
     pub version: String,
     pub salt: [u8; 32],
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Tombstones for deleted entries — allows sync to propagate deletions.
+    #[serde(default)]
+    pub deleted_entries: Vec<DeletedEntry>,
 }
 
 impl Vault {
@@ -149,6 +159,7 @@ impl Vault {
             salt: CryptoManager::generate_salt(),
             created_at: now,
             updated_at: now,
+            deleted_entries: Vec::new(),
         }
     }
 
@@ -158,12 +169,13 @@ impl Vault {
         self.updated_at = Utc::now();
     }
 
-    /// Remove an entry from the vault
+    /// Remove an entry from the vault and record a tombstone for sync.
     pub fn remove_entry(&mut self, entry_id: &Uuid) -> bool {
         let initial_len = self.entries.len();
         self.entries.retain(|e| e.id != *entry_id);
         let removed = self.entries.len() < initial_len;
         if removed {
+            self.deleted_entries.push(DeletedEntry { id: *entry_id, deleted_at: Utc::now() });
             self.updated_at = Utc::now();
         }
         removed

@@ -53,8 +53,81 @@
     }
   }
 
+  // ── Cloud storage ──────────────────────────────────────────────────────────
+
+  let syncStatus = $state<{ connected: boolean; lastSync: string | null; hasPendingConflicts: boolean } | null>(null);
+  let cloudLoading = $state(false);
+  let cloudError = $state("");
+  let cloudSuccess = $state("");
+  let syncing = $state(false);
+
+  async function loadSyncStatus() {
+    try {
+      syncStatus = await invoke("get_sync_status");
+    } catch {
+      // Not a fatal error — cloud may not be configured
+    }
+  }
+
+  async function connectGoogleDrive() {
+    cloudLoading = true;
+    cloudError = "";
+    cloudSuccess = "";
+    try {
+      await invoke("connect_google_drive");
+      cloudSuccess = "Connected to Google Drive!";
+      await loadSyncStatus();
+      setTimeout(() => (cloudSuccess = ""), 3000);
+    } catch (e) {
+      cloudError = e instanceof Error ? e.message : String(e);
+    } finally {
+      cloudLoading = false;
+    }
+  }
+
+  async function disconnectGoogleDrive() {
+    if (!confirm("Disconnect from Google Drive? Your local vault will not be affected.")) return;
+    try {
+      await invoke("disconnect_google_drive");
+      await loadSyncStatus();
+    } catch (e) {
+      cloudError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function syncNow() {
+    syncing = true;
+    cloudError = "";
+    cloudSuccess = "";
+    try {
+      const result: any = await invoke("sync_vault");
+      if (result.status === "synced") {
+        const parts = [];
+        if (result.entriesAdded) parts.push(`${result.entriesAdded} added`);
+        if (result.entriesUpdated) parts.push(`${result.entriesUpdated} updated`);
+        cloudSuccess = parts.length
+          ? `Synced — ${parts.join(", ")}.`
+          : "Already up to date.";
+        setTimeout(() => (cloudSuccess = ""), 4000);
+        await loadSyncStatus();
+      } else if (result.status === "conflicts") {
+        cloudError = `${result.conflicts.length} conflict(s) need your attention. Open the sync panel to resolve them.`;
+      }
+    } catch (e) {
+      cloudError = e instanceof Error ? e.message : String(e);
+    } finally {
+      syncing = false;
+    }
+  }
+
+  function formatLastSync(iso: string | null) {
+    if (!iso) return "Never";
+    return new Date(iso).toLocaleString();
+  }
+
   // Initialize
   loadSettings();
+  loadSyncStatus();
 </script>
 
 <div
@@ -124,6 +197,66 @@
           <p class="setting-description">
             Automatically clear copied passwords from clipboard after this time.
           </p>
+        </div>
+      </div>
+
+      <!-- Cloud Storage -->
+      <div class="settings-section">
+        <h3>☁️ Cloud Storage (Google Drive)</h3>
+
+        <div class="setting-group">
+          {#if syncStatus?.connected}
+            <div class="cloud-status connected">
+              <span class="status-dot"></span>
+              <span>Connected to Google Drive</span>
+            </div>
+            <p class="setting-description">
+              Last synced: {formatLastSync(syncStatus.lastSync)}
+            </p>
+            <div class="cloud-actions">
+              <button
+                class="btn-cloud-sync"
+                onclick={syncNow}
+                disabled={syncing}
+              >
+                {#if syncing}
+                  <span class="spinner"></span> Syncing…
+                {:else}
+                  Sync Now
+                {/if}
+              </button>
+              <button class="btn-cloud-disconnect" onclick={disconnectGoogleDrive}>
+                Disconnect
+              </button>
+            </div>
+          {:else}
+            <div class="cloud-status disconnected">
+              <span class="status-dot"></span>
+              <span>Not connected</span>
+            </div>
+            <p class="setting-description">
+              Connect your Google Drive to sync your encrypted vault across all your devices.
+              Only files created by SecurePass are accessible to the app.
+            </p>
+            <button
+              class="btn-cloud-connect"
+              onclick={connectGoogleDrive}
+              disabled={cloudLoading}
+            >
+              {#if cloudLoading}
+                <span class="spinner"></span> Waiting for Google sign-in…
+              {:else}
+                Connect Google Drive
+              {/if}
+            </button>
+          {/if}
+
+          {#if cloudError}
+            <div class="error-message" style="margin-top:12px">{cloudError}</div>
+          {/if}
+          {#if cloudSuccess}
+            <div class="success-message" style="margin-top:12px">{cloudSuccess}</div>
+          {/if}
         </div>
       </div>
 
@@ -369,6 +502,80 @@
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
   }
+
+  .cloud-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    font-size: 0.875rem;
+    margin-bottom: 8px;
+  }
+
+  .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  .connected .status-dot { background: #38a169; }
+  .disconnected .status-dot { background: #a0aec0; }
+
+  .cloud-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .btn-cloud-connect {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 16px;
+    background: #4285f4;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-cloud-connect:hover:not(:disabled) { background: #3367d6; }
+  .btn-cloud-connect:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .btn-cloud-sync {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-cloud-sync:hover:not(:disabled) { background: #5a67d8; }
+  .btn-cloud-sync:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .btn-cloud-disconnect {
+    padding: 8px 14px;
+    background: #edf2f7;
+    color: #718096;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-cloud-disconnect:hover { background: #fed7d7; color: #c53030; border-color: #feb2b2; }
 
   @media (max-width: 768px) {
     .modal-content {

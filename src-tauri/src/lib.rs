@@ -3,6 +3,7 @@
 mod crypto;
 mod vault;
 mod commands;
+mod sync;
 
 use std::sync::Mutex;
 use commands::AppState;
@@ -31,7 +32,14 @@ pub fn run() {
             commands::generate_password,
             commands::export_vault,
             commands::import_vault,
-            commands::import_from_password_locker
+            commands::import_from_password_locker,
+            commands::get_sync_status,
+            commands::connect_google_drive,
+            commands::disconnect_google_drive,
+            commands::sync_vault,
+            commands::resolve_conflicts,
+            commands::check_sync_needed,
+            commands::restore_vault_from_drive
         ])
         .run(tauri::generate_context!())
         .expect("error while running SecurePass application");

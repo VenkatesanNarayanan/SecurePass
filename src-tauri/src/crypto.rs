@@ -60,6 +60,18 @@ impl CryptoManager {
         Ok(plaintext)
     }
 
+    /// Extract raw key bytes so the key can be used across async boundaries.
+    pub fn get_key_bytes(&self) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(self.key.as_slice());
+        bytes
+    }
+
+    /// Reconstruct a CryptoManager from raw key bytes (no Argon2 re-derivation).
+    pub fn from_key_bytes(bytes: &[u8; 32]) -> Self {
+        Self { key: Key::from(*bytes) }
+    }
+
     /// Securely zero out memory (defense against memory dumps)
     pub fn zeroize_key(&mut self) {
         self.key = Key::default();
