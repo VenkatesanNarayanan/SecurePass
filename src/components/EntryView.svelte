@@ -64,17 +64,17 @@
     }
   }
 
-  function isPasswordField(fieldName: string): boolean {
+  function isPasswordField(field: any): boolean {
+    if (field.fieldType === 'password') return true;
     const passwordPatterns = [
       'password', 'passphrase', 'pin', 'code', 'key', 'secret', 'token',
       'pwd', 'pass', 'auth', 'credential', 'access'
     ];
-    const lowerFieldName = fieldName.toLowerCase();
-    return passwordPatterns.some(pattern => lowerFieldName.includes(pattern));
+    return passwordPatterns.some(pattern => field.name.toLowerCase().includes(pattern));
   }
 
-  function maskValue(value: string, fieldName: string): string {
-    if (isPasswordField(fieldName) && value.length > 0) {
+  function maskValue(value: string, field: any): string {
+    if (isPasswordField(field) && value.length > 0) {
       return '•'.repeat(Math.min(value.length, 20));
     }
     return value;
@@ -173,8 +173,8 @@
             <div class="field-item">
               <span class="label">{field.name}</span>
               <div class="field-value-container">
-                <div class="field-value" class:password={isPasswordField(field.name)}>
-                  {maskValue(field.value, field.name)}
+                <div class="field-value" class:password={isPasswordField(field)}>
+                  {maskValue(field.value, field)}
                 </div>
                 <button
                   class="copy-btn"
