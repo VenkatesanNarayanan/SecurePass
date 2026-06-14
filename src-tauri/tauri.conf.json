@@ -1,16 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SecurePass",
-  "version": "1.0.0",
+  "version": "1.1.14",
   "identifier": "com.securepass.app",
-
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../build"
   },
-
   "app": {
     "windows": [
       {
@@ -29,7 +27,6 @@
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self';"
     }
   },
-
   "bundle": {
     "active": true,
     "targets": [
@@ -40,7 +37,6 @@
       "appimage",
       "deb"
     ],
-
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -48,17 +44,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-
     "windows": {
       "digestAlgorithm": "sha256"
     },
-
     "macOS": {
       "minimumSystemVersion": "10.15",
       "signingIdentity": null,
       "entitlements": null
     },
-
     "linux": {
       "deb": {
         "depends": [
@@ -70,6 +63,5 @@
       "appimage": {}
     }
   },
-
   "plugins": {}
 }
