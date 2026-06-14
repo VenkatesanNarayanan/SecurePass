@@ -411,7 +411,8 @@
   <!-- Header -->
   <header class="dashboard-header">
     <div class="header-left">
-      <h1>🔐 SecurePass</h1>
+      <img src="/app-icon.png" alt="SecurePass" class="header-app-icon" />
+      <h1>SecurePass</h1>
       <span class="vault-status">
         {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
       </span>
@@ -682,6 +683,11 @@
     display: flex;
     align-items: center;
     gap: 12px;
+  }
+
+  .header-app-icon {
+    width: 32px;
+    height: 32px;
   }
 
   .header-left h1 {

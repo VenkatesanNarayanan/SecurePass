@@ -147,7 +147,8 @@
 <div class="unlock-container">
   <div class="unlock-card">
     <div class="logo">
-      <h1>🔐 SecurePass</h1>
+      <img src="/app-icon.png" alt="SecurePass" class="app-icon" />
+      <h1>SecurePass</h1>
       <p>Encrypted Password Manager</p>
     </div>
 
@@ -289,6 +290,12 @@
     width: 100%;
     max-width: 400px;
     text-align: center;
+  }
+
+  .app-icon {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 12px;
   }
 
   .logo h1 {
