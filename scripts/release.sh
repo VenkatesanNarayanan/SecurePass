@@ -40,8 +40,17 @@ node -e "
   console.log('  tauri.conf.json →', conf.version);
 "
 
+# ── Bump Cargo.toml (CARGO_PKG_VERSION used for update checks) ─────────────
+node -e "
+  const fs = require('fs');
+  let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+  cargo = cargo.replace(/^version = \".*?\"/m, 'version = \"${VERSION}\"');
+  fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+  console.log('  Cargo.toml → ${VERSION}');
+"
+
 # ── Commit, tag, push ──────────────────────────────────────────────────────
-git add package.json src-tauri/tauri.conf.json
+git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
 git commit -m "${MESSAGE}"
 git tag -a "${TAG}" -m "${MESSAGE}"
 git push
