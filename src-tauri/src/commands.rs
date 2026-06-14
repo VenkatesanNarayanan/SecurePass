@@ -1365,6 +1365,46 @@ pub async fn restore_vault_from_drive(
     Ok(metadata)
 }
 
+// ── Update check ─────────────────────────────────────────────────────────────
+
+#[command]
+pub async fn check_for_update() -> Result<serde_json::Value, String> {
+    let current = env!("CARGO_PKG_VERSION");
+
+    let resp = reqwest::Client::new()
+        .get("https://www.securepass.wonderstek.com/version.json")
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let latest = resp["version"].as_str().unwrap_or("").to_string();
+    let has_update = is_newer(&latest, current);
+
+    Ok(serde_json::json!({
+        "hasUpdate": has_update,
+        "currentVersion": current,
+        "latestVersion": latest,
+        "releasedAt": resp["released_at"],
+        "downloadUrl": resp["download_url"],
+    }))
+}
+
+/// Returns true if `remote` is a strictly higher semver than `local`.
+fn is_newer(remote: &str, local: &str) -> bool {
+    let parse = |v: &str| -> (u32, u32, u32) {
+        let mut parts = v.trim_start_matches('v').splitn(3, '.');
+        let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        (major, minor, patch)
+    };
+    parse(remote) > parse(local)
+}
+
 // ── Vault file helpers (used by non-sync commands above) ─────────────────────
 
 /// Load vault from a specific file path

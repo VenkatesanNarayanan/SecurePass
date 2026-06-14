@@ -137,7 +137,7 @@ jobs:
           echo "Files in releases/${TAG}:"
           ls -lh "releases/${TAG}/"
 
-      - name: Write release-data.js
+      - name: Write release-data.js and version.json
         run: |
           TAG="${{ github.ref_name }}"
           BASE="releases/${TAG}"
@@ -146,11 +146,12 @@ jobs:
           PKG=$(ls releases/${TAG}/*.pkg 2>/dev/null | head -1)
           FILE_VER=$(basename "$PKG" | sed 's/SecurePass_//; s/_macos\.pkg//')
           VER="${FILE_VER}"
+          RELEASED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           cat > release-data.js <<EOF
           window.SECUREPASS_RELEASE = {
             "version": "${VER}",
             "tag": "${TAG}",
-            "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "released_at": "${RELEASED_AT}",
             "platforms": {
               "macos": {
                 "label": "macOS (PKG — Recommended)",
@@ -176,6 +177,15 @@ jobs:
             }
           };
           EOF
+          # version.json — fetched by the app on startup for update checks
+          cat > version.json <<EOF
+          {
+            "version": "${VER}",
+            "tag": "${TAG}",
+            "released_at": "${RELEASED_AT}",
+            "download_url": "https://www.securepass.wonderstek.com/#download"
+          }
+          EOF
 
       - name: Prune old releases (keep 2 most recent)
         run: |
@@ -192,7 +202,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "releases/${{ github.ref_name }}" release-data.js
+          git add "releases/${{ github.ref_name }}" release-data.js version.json
           git diff --staged --quiet && echo "No changes" || \
             git commit -m "release: add binaries for ${{ github.ref_name }}, prune old releases"
           git push

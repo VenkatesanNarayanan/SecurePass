@@ -46,6 +46,9 @@
   let reauthError = $state("");
   let reauthLoading = $state(false);
 
+  // Update notification
+  let updateInfo = $state<{ latestVersion: string; downloadUrl: string } | null>(null);
+
   // Import vault modal state
   let showImportModal = $state(false);
   let importFilePath = $state("");
@@ -350,6 +353,11 @@
   loadData();
   loadSyncStatus().then(() => checkSyncNeeded());
 
+  // Check for updates silently on startup
+  invoke("check_for_update")
+    .then((result: any) => { if (result.hasUpdate) updateInfo = result; })
+    .catch(() => { /* no network — ignore */ });
+
   // Poll Drive for remote changes every 2 minutes when connected.
   $effect(() => {
     if (!syncStatus?.connected) return;
@@ -463,6 +471,17 @@
       </button>
     </div>
   </header>
+
+  <!-- Update notification banner -->
+  {#if updateInfo}
+    <div class="update-banner">
+      <span class="update-banner-text">
+        🎉 SecurePass <strong>v{updateInfo.latestVersion}</strong> is available — you're on v{updateInfo.currentVersion ?? '…'}.
+      </span>
+      <a href={updateInfo.downloadUrl} target="_blank" rel="noopener" class="update-banner-btn">Download update</a>
+      <button class="update-banner-dismiss" onclick={() => updateInfo = null} aria-label="Dismiss">✕</button>
+    </div>
+  {/if}
 
   <!-- Search and Filters -->
   <div class="dashboard-controls">
@@ -830,6 +849,45 @@
   }
 
   .btn-sync.needs-sync:hover:not(:disabled) { background: #fef3c7; }
+
+  .update-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #ebf8ff;
+    border-bottom: 1px solid #bee3f8;
+    padding: 10px 24px;
+    font-size: 0.88rem;
+    color: #2b6cb0;
+  }
+
+  .update-banner-text { flex: 1; }
+
+  .update-banner-btn {
+    background: #3182ce;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .update-banner-btn:hover { background: #2b6cb0; }
+
+  .update-banner-dismiss {
+    background: none;
+    border: none;
+    color: #90cdf4;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 2px 4px;
+    line-height: 1;
+  }
+
+  .update-banner-dismiss:hover { color: #2b6cb0; }
 
   .btn-sync.btn-sync-disconnected {
     background: #f8fafc;
