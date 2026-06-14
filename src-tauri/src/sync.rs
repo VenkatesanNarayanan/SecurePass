@@ -43,6 +43,11 @@ pub struct MergeResult {
     pub raw_conflicts: Vec<(Entry, Entry)>,
     pub entries_added: usize,
     pub entries_updated: usize,
+    /// True when local had changes (new entries, newer edits, or deletions) that
+    /// are not yet reflected in the remote vault. Only upload to Drive when this
+    /// is true — otherwise the Drive file is already up-to-date and re-uploading
+    /// would bump modifiedTime and trigger spurious "sync needed" on other devices.
+    pub local_contributed: bool,
 }
 
 // ── File paths ───────────────────────────────────────────────────────────────
@@ -476,6 +481,7 @@ pub fn merge_vaults(
     let mut raw_conflicts: Vec<(Entry, Entry)> = Vec::new();
     let mut entries_added = 0usize;
     let mut entries_updated = 0usize;
+    let mut local_contributed = false;
 
     for id in &all_ids {
         match (local_map.get(id), remote_map.get(id)) {
@@ -487,6 +493,7 @@ pub fn merge_vaults(
                     (true, true) if le.updated_at != re.updated_at => {
                         // Both sides modified since last sync — conflict.
                         raw_conflicts.push(((*le).clone(), (*re).clone()));
+                        local_contributed = true;
                     }
                     (false, true) => {
                         merged_entries.push((*re).clone());
@@ -495,6 +502,10 @@ pub fn merge_vaults(
                     _ => {
                         // Local is newer or both unchanged — keep local.
                         merged_entries.push((*le).clone());
+                        // Only contributes if local actually changed (remote didn't).
+                        if local_changed && !remote_changed {
+                            local_contributed = true;
+                        }
                     }
                 }
             }
@@ -505,6 +516,7 @@ pub fn merge_vaults(
                         entries_added += 1;
                     }
                     merged_entries.push((*le).clone());
+                    local_contributed = true; // local has an entry remote doesn't
                 }
                 // If remote has a tombstone for this ID, deletion propagates — skip.
             }
@@ -529,10 +541,20 @@ pub fn merge_vaults(
         }
     }
 
+    // Local tombstones not present in remote are a local contribution (deletions to propagate).
+    if !local_contributed {
+        for d in &local.deleted_entries {
+            if !remote.deleted_entries.iter().any(|rd| rd.id == d.id) {
+                local_contributed = true;
+                break;
+            }
+        }
+    }
+
     let mut merged = local.clone();
     merged.entries = merged_entries;
     merged.deleted_entries = merged_deleted;
     merged.updated_at = Utc::now();
 
-    MergeResult { merged, raw_conflicts, entries_added, entries_updated }
+    MergeResult { merged, raw_conflicts, entries_added, entries_updated, local_contributed }
 }

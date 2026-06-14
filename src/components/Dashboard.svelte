@@ -46,6 +46,13 @@
   let reauthError = $state("");
   let reauthLoading = $state(false);
 
+  // Import vault modal state
+  let showImportModal = $state(false);
+  let importFilePath = $state("");
+  let importPassword = $state("");
+  let importError = $state("");
+  let importLoading = $state(false);
+
   // Load data on mount
   async function loadData() {
     loading = true;
@@ -117,14 +124,14 @@
   function handleEntryDelete() {
     showEntryView = false;
     viewingEntry = null;
-    loadData(); // Refresh data after deletion
+    loadData().then(() => autoSync());
   }
 
   // Handle entry form close
   function handleEntryFormClose() {
     showEntryForm = false;
     editingEntry = null;
-    loadData(); // Refresh data
+    loadData().then(() => autoSync());
   }
 
   // Handle lock vault
@@ -193,22 +200,41 @@
       if (!filePath) return;
 
       if ((filePath as string).endsWith(".json")) {
-        // PasswordLocker JSON export
+        // PasswordLocker JSON export — no password needed
         const count = await invoke("import_from_password_locker", { request: { filePath } });
         await loadData();
         alert(`Imported ${count} entries from PasswordLocker!`);
       } else {
-        // SecurePass .spvault
-        const masterPassword = prompt("Enter the master password for the vault you want to import:");
-        if (!masterPassword) return;
-
-        await invoke("import_vault", { request: { filePath, masterPassword } });
-        await loadData();
-        alert("Vault imported successfully!");
+        // SecurePass .spvault — show password modal instead of prompt()
+        importFilePath = filePath as string;
+        importPassword = "";
+        importError = "";
+        showImportModal = true;
       }
     } catch (error) {
       console.error("Failed to import vault:", error);
       alert("Failed to import vault: " + error);
+    }
+  }
+
+  async function handleImportConfirm() {
+    if (!importPassword) { importError = "Enter the master password for the vault file."; return; }
+    importLoading = true;
+    importError = "";
+    try {
+      const result: any = await invoke("import_vault", { request: { filePath: importFilePath, masterPassword: importPassword } });
+      showImportModal = false;
+      importPassword = "";
+      importFilePath = "";
+      await loadData();
+      const msg = result.entriesAdded > 0
+        ? `Import complete. ${result.entriesAdded} new ${result.entriesAdded === 1 ? 'entry' : 'entries'} added to your vault.`
+        : "Import complete. No new entries found — your vault already has everything from that file.";
+      alert(msg);
+    } catch (e) {
+      importError = e instanceof Error ? e.message : String(e);
+    } finally {
+      importLoading = false;
     }
   }
 
@@ -248,6 +274,29 @@
       }
     } catch (e) {
       syncError = e instanceof Error ? e.message : String(e);
+    } finally {
+      syncing = false;
+    }
+  }
+
+  // Fire-and-forget background sync after local writes (add/update/delete).
+  // Only runs when Drive is connected; errors are silent (user can always sync manually).
+  async function autoSync() {
+    if (!syncStatus?.connected || syncing) return;
+    syncing = true;
+    try {
+      const result: any = await invoke("sync_vault");
+      if (result.status === "password_changed") {
+        showReauthModal = true;
+      } else if (result.status === "conflicts") {
+        pendingConflicts = result.conflicts;
+        showConflictModal = true;
+      } else {
+        needsSync = false;
+        await loadSyncStatus();
+      }
+    } catch {
+      // silent — manual sync button is still available
     } finally {
       syncing = false;
     }
@@ -364,7 +413,7 @@
     <div class="header-left">
       <h1>🔐 SecurePass</h1>
       <span class="vault-status">
-        {vaultStatus?.entry_count || 0} entries
+        {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
       </span>
     </div>
     <div class="header-right">
@@ -397,6 +446,10 @@
             ⚠️ Resolve
           </button>
         {/if}
+      {:else}
+        <button class="btn-sync btn-sync-disconnected" onclick={() => showSettings = true} title="Set up Google Drive sync in Settings">
+          ☁️ Connect Drive
+        </button>
       {/if}
       <button class="btn-outline" onclick={handleExport} title="Export Vault">
         📤 Export
@@ -475,6 +528,70 @@
           onResolved={handleConflictsResolved}
           onCancel={() => showConflictModal = false}
         />
+    {/if}
+
+    <!-- Import vault password modal -->
+    {#if showImportModal}
+      <div
+        class="modal-overlay"
+        role="presentation"
+        onclick={() => { showImportModal = false; importPassword = ""; importError = ""; }}
+        onkeydown={(e) => e.key === 'Escape' && (showImportModal = false)}
+      >
+        <div
+          class="reauth-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Import vault"
+          onclick={(e) => e.stopPropagation()}
+          onkeydown={(e) => e.stopPropagation()}
+          tabindex="-1"
+        >
+          <div class="reauth-icon">📥</div>
+          <h3>Import Vault</h3>
+          <p class="reauth-desc">
+            Enter the master password for the vault file you're importing.
+            New entries from that file will be <strong>merged into your current vault</strong> — your existing passwords will not be removed.
+          </p>
+
+          <div class="reauth-field">
+            <label for="import-pw">Master Password</label>
+            <input
+              id="import-pw"
+              type="password"
+              bind:value={importPassword}
+              placeholder="Master password for the vault file"
+              disabled={importLoading}
+              onkeydown={(e) => e.key === 'Enter' && handleImportConfirm()}
+            />
+          </div>
+
+          {#if importError}
+            <div class="reauth-error">{importError}</div>
+          {/if}
+
+          <div class="reauth-actions">
+            <button
+              class="btn-reauth-cancel"
+              onclick={() => { showImportModal = false; importPassword = ""; importError = ""; }}
+              disabled={importLoading}
+            >
+              Cancel
+            </button>
+            <button
+              class="btn-reauth-confirm"
+              onclick={handleImportConfirm}
+              disabled={importLoading}
+            >
+              {#if importLoading}
+                <span class="sync-spin">⟳</span> Importing…
+              {:else}
+                Import Vault
+              {/if}
+            </button>
+          </div>
+        </div>
+      </div>
     {/if}
 
     <!-- Re-auth Modal: master password changed on another device -->
@@ -707,6 +824,13 @@
   }
 
   .btn-sync.needs-sync:hover:not(:disabled) { background: #fef3c7; }
+
+  .btn-sync.btn-sync-disconnected {
+    background: #f8fafc;
+    border-color: #cbd5e0;
+    color: #718096;
+  }
+  .btn-sync.btn-sync-disconnected:hover { background: #edf2f7; color: #4a5568; }
 
   .needs-sync-dot {
     width: 7px;

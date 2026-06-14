@@ -652,27 +652,54 @@ pub struct ImportVaultRequest {
     pub master_password: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportVaultResult {
+    pub entries_added: usize,
+    pub entries_kept_local: usize,
+}
+
 #[command]
 pub async fn import_vault(
     state: tauri::State<'_, Mutex<AppState>>,
     request: ImportVaultRequest,
-) -> Result<VaultMetadata, String> {
+) -> Result<ImportVaultResult, String> {
     let mut state = state.lock().map_err(|e| format!("State lock error: {}", e))?;
 
-    // Load vault from the specified file path
-    let vault = load_vault_from_path(&request.file_path, &request.master_password)?;
+    if state.is_locked || state.vault.is_none() || state.crypto.is_none() {
+        return Err("Vault is locked".to_string());
+    }
 
-    // Create crypto manager for the imported vault
-    let crypto = CryptoManager::new(&request.master_password, &vault.salt)
-        .map_err(|e| format!("Failed to create crypto manager: {}", e))?;
+    // Decrypt the imported vault file
+    let imported = load_vault_from_path(&request.file_path, &request.master_password)?;
 
-    // Update state
-    state.vault = Some(vault);
-    state.crypto = Some(crypto);
-    state.is_locked = false;
+    let local = state.vault.as_ref().unwrap();
+    let crypto = state.crypto.as_ref().unwrap();
 
-    let metadata = VaultMetadata::from(state.vault.as_ref().unwrap());
-    Ok(metadata)
+    // Merge: add entries from the imported vault that don't exist locally.
+    // last_sync = None means epoch, so every entry is "changed" — conflicts
+    // (same UUID, different updated_at) are resolved by keeping the local version.
+    let merge = sync::merge_vaults(local, &imported, None);
+
+    let conflicts_count = merge.raw_conflicts.len();
+    let entries_added = merge.entries_added;
+
+    let mut merged = merge.merged;
+    // Re-add the local side of every conflict (merge_vaults drops them from merged).
+    for (local_entry, _) in merge.raw_conflicts {
+        merged.entries.push(local_entry);
+    }
+    merged.updated_at = chrono::Utc::now();
+
+    // Persist merged vault to disk
+    save_vault(&merged, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
+
+    state.vault = Some(merged);
+
+    Ok(ImportVaultResult {
+        entries_added,
+        entries_kept_local: conflicts_count,
+    })
 }
 
 /// Save vault to a specific file path
@@ -945,8 +972,13 @@ pub async fn sync_vault(
 
     if merge.raw_conflicts.is_empty() {
         // No conflicts: finalize immediately.
-        let vault_bytes = sync::encrypt_vault_bytes(&merge.merged, &crypto)?;
-        sync::upload_vault_to_drive(&access_token, vault_bytes, Some(&file_id)).await?;
+        // Only upload to Drive when local actually contributed changes — skipping the upload
+        // when local had nothing new prevents bumping Drive's modifiedTime and avoids
+        // triggering spurious "sync needed" indicators on other devices.
+        if merge.local_contributed {
+            let vault_bytes = sync::encrypt_vault_bytes(&merge.merged, &crypto)?;
+            sync::upload_vault_to_drive(&access_token, vault_bytes, Some(&file_id)).await?;
+        }
 
         let (added, updated) = (merge.entries_added, merge.entries_updated);
         let merged_vault = merge.merged;
