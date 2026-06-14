@@ -926,7 +926,19 @@ pub async fn sync_vault(
     // ── Download + decrypt remote vault ─────────────────────────────────────
     let file_id = file_id.unwrap();
     let remote_bytes = sync::download_vault_from_drive(&access_token, &file_id).await?;
-    let remote_vault = sync::decrypt_vault_bytes(&remote_bytes, &crypto)?;
+    let remote_vault = match sync::decrypt_vault_bytes(&remote_bytes, &crypto) {
+        Ok(v) => v,
+        Err(_) => {
+            // Decryption failed with the current key — the master password was
+            // changed on another device. Signal the frontend to ask for the new password.
+            return Ok(SyncResult {
+                status: "password_changed".to_string(),
+                conflicts: vec![],
+                entries_added: 0,
+                entries_updated: 0,
+            });
+        }
+    };
 
     // ── Merge ────────────────────────────────────────────────────────────────
     let merge = sync::merge_vaults(&local_vault, &remote_vault, sync_state.last_sync);
@@ -975,6 +987,199 @@ pub async fn sync_vault(
             entries_updated: merge.entries_updated,
         })
     }
+}
+
+/// Called after `sync_vault` returns `status = "password_changed"`.
+///
+/// System B is still unlocked with the old key (vault already in memory).
+/// This command downloads the Drive vault, reads the new salt embedded in its
+/// header, derives the new key from the user-supplied new password + that salt,
+/// decrypts and merges Drive entries with local entries, re-saves locally using
+/// the new key, and updates AppState — so both devices share the same key.
+#[command]
+pub async fn reauth_and_sync(
+    state: tauri::State<'_, Mutex<AppState>>,
+    new_master_password: String,
+) -> Result<SyncResult, String> {
+    if new_master_password.len() < 8 {
+        return Err("New master password must be at least 8 characters".to_string());
+    }
+
+    // Grab local vault + sync state under the lock, then release before async ops.
+    let (local_vault, sync_state) = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        if s.is_locked || s.vault.is_none() {
+            return Err("Vault is locked".to_string());
+        }
+        let ss = sync::load_sync_state();
+        if !ss.connected {
+            return Err("Not connected to Google Drive".to_string());
+        }
+        (s.vault.as_ref().unwrap().clone(), ss)
+    };
+
+    let access_token = sync::get_valid_access_token().await?;
+    let file_id = sync::find_drive_file(&access_token)
+        .await?
+        .ok_or("No SecurePass vault found on Google Drive")?;
+
+    // Download the Drive vault (encrypted with the new password + new salt from System A).
+    let remote_bytes = sync::download_vault_from_drive(&access_token, &file_id).await?;
+    if remote_bytes.len() < 44 {
+        return Err("Drive vault appears corrupted (file too short)".to_string());
+    }
+
+    // The new salt is the first 32 bytes of the Drive file — we MUST use this
+    // salt (not generate a new one) so key derivation matches System A.
+    let new_salt: [u8; 32] = remote_bytes[0..32]
+        .try_into()
+        .map_err(|_| "Could not read salt from Drive vault")?;
+
+    let new_crypto = CryptoManager::new(&new_master_password, &new_salt)
+        .map_err(|e| format!("Failed to derive new key: {}", e))?;
+
+    // Decryption validates the password — wrong password fails here.
+    let remote_vault = sync::decrypt_vault_bytes(&remote_bytes, &new_crypto)
+        .map_err(|_| "Incorrect new master password".to_string())?;
+
+    // Merge: local in-memory entries + remote entries.
+    let merge = sync::merge_vaults(&local_vault, &remote_vault, sync_state.last_sync);
+    let mut merged = merge.merged;
+    // Merged vault must carry the new salt so save_vault writes the right header.
+    merged.salt = new_salt;
+    merged.updated_at = Utc::now();
+
+    if merge.raw_conflicts.is_empty() {
+        save_vault(&merged, &new_crypto)
+            .map_err(|e| format!("Failed to save vault: {}", e))?;
+
+        let vault_bytes = sync::encrypt_vault_bytes(&merged, &new_crypto)?;
+        sync::upload_vault_to_drive(&access_token, vault_bytes, Some(&file_id)).await?;
+
+        let (added, updated) = (merge.entries_added, merge.entries_updated);
+        let new_key_bytes = new_crypto.get_key_bytes();
+
+        {
+            let mut s = state.lock().map_err(|e| e.to_string())?;
+            s.vault = Some(merged);
+            // Replace crypto so future saves use the new key.
+            s.crypto = Some(CryptoManager::from_key_bytes(&new_key_bytes));
+        }
+
+        let mut new_state = sync_state;
+        new_state.drive_file_id = Some(file_id);
+        new_state.last_sync = Some(Utc::now());
+        sync::save_sync_state(&new_state)?;
+
+        Ok(SyncResult {
+            status: "synced".to_string(),
+            conflicts: vec![],
+            entries_added: added,
+            entries_updated: updated,
+        })
+    } else {
+        // Stash conflicts for the user to resolve via resolve_conflicts.
+        let conflicts: Vec<ConflictInfo> = merge.raw_conflicts.iter()
+            .map(|(l, r)| ConflictInfo {
+                local_entry: entry_to_json(l),
+                remote_entry: entry_to_json(r),
+            })
+            .collect();
+
+        let new_key_bytes = new_crypto.get_key_bytes();
+
+        {
+            let mut s = state.lock().map_err(|e| e.to_string())?;
+            // Switch crypto now so resolve_conflicts uses the new key when it saves.
+            s.crypto = Some(CryptoManager::from_key_bytes(&new_key_bytes));
+            // Update vault salt so any interim save uses the right header.
+            if let Some(v) = s.vault.as_mut() { v.salt = new_salt; }
+            s.pending_sync_merge = Some(merged);
+            s.pending_conflicts = merge.raw_conflicts;
+            s.pending_drive_file_id = Some(file_id);
+        }
+
+        Ok(SyncResult {
+            status: "conflicts".to_string(),
+            conflicts,
+            entries_added: merge.entries_added,
+            entries_updated: merge.entries_updated,
+        })
+    }
+}
+
+/// Change the vault's master password.
+///
+/// Verifies the current password, generates a fresh Argon2 salt, re-derives
+/// the key from the new password, re-encrypts the vault, saves locally, and
+/// (if Google Drive is connected) re-uploads so other devices stay in sync.
+#[command]
+pub async fn change_master_password(
+    state: tauri::State<'_, Mutex<AppState>>,
+    current_password: String,
+    new_password: String,
+) -> Result<(), String> {
+    if new_password.len() < 8 {
+        return Err("New password must be at least 8 characters".to_string());
+    }
+
+    // Phase 1: verify current password, re-encrypt, save locally — all under the lock.
+    let (new_key_bytes, vault_snapshot, sync_connected) = {
+        let mut s = state.lock().map_err(|e| e.to_string())?;
+        if s.is_locked || s.vault.is_none() {
+            return Err("Vault is locked".to_string());
+        }
+
+        let current_key = s.crypto.as_ref().unwrap().get_key_bytes();
+        let vault = s.vault.as_ref().unwrap();
+
+        // Verify by deriving from the stored salt and comparing key bytes.
+        let check = CryptoManager::new(&current_password, &vault.salt)
+            .map_err(|_| "Failed to verify current password".to_string())?;
+        if check.get_key_bytes() != current_key {
+            return Err("Current password is incorrect".to_string());
+        }
+
+        // New salt → new key (salt reuse would weaken security).
+        let new_salt = CryptoManager::generate_salt();
+        let new_crypto = CryptoManager::new(&new_password, &new_salt)
+            .map_err(|e| format!("Failed to create new encryption key: {}", e))?;
+
+        let vault = s.vault.as_mut().unwrap();
+        vault.salt = new_salt;
+        vault.updated_at = Utc::now();
+
+        save_vault(vault, &new_crypto)
+            .map_err(|e| format!("Failed to save vault: {}", e))?;
+
+        let new_key_bytes = new_crypto.get_key_bytes();
+        let snapshot = vault.clone();
+        let connected = sync::load_sync_state().connected;
+
+        s.crypto = Some(new_crypto);
+
+        (new_key_bytes, snapshot, connected)
+    };
+
+    // Phase 2: re-upload to Drive outside the lock (async).
+    if sync_connected {
+        let crypto = CryptoManager::from_key_bytes(&new_key_bytes);
+        if let Ok(token) = sync::get_valid_access_token().await {
+            if let Ok(file_id) = sync::find_drive_file(&token).await {
+                if let Ok(bytes) = sync::encrypt_vault_bytes(&vault_snapshot, &crypto) {
+                    if let Ok(new_id) = sync::upload_vault_to_drive(&token, bytes, file_id.as_deref()).await {
+                        let mut ss = sync::load_sync_state();
+                        ss.drive_file_id = Some(new_id);
+                        ss.last_sync = Some(Utc::now());
+                        let _ = sync::save_sync_state(&ss);
+                    }
+                }
+            }
+        }
+        // Non-fatal — local vault is already saved with the new key.
+    }
+
+    Ok(())
 }
 
 /// Check whether a sync is needed without downloading the full vault.

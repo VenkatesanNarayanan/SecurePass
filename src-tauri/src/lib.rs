@@ -39,7 +39,9 @@ pub fn run() {
             commands::sync_vault,
             commands::resolve_conflicts,
             commands::check_sync_needed,
-            commands::restore_vault_from_drive
+            commands::restore_vault_from_drive,
+            commands::reauth_and_sync,
+            commands::change_master_password
         ])
         .run(tauri::generate_context!())
         .expect("error while running SecurePass application");

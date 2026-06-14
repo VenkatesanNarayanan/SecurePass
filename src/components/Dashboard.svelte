@@ -40,6 +40,12 @@
   let needsSync = $state(false);
   let syncCheckReason = $state<{ localChanged: boolean; remoteChanged: boolean }>({ localChanged: false, remoteChanged: false });
 
+  // Re-auth state (password changed on another device)
+  let showReauthModal = $state(false);
+  let reauthPassword = $state("");
+  let reauthError = $state("");
+  let reauthLoading = $state(false);
+
   // Load data on mount
   async function loadData() {
     loading = true;
@@ -230,7 +236,9 @@
     syncError = "";
     try {
       const result: any = await invoke("sync_vault");
-      if (result.status === "conflicts") {
+      if (result.status === "password_changed") {
+        showReauthModal = true;
+      } else if (result.status === "conflicts") {
         pendingConflicts = result.conflicts;
         showConflictModal = true;
       } else {
@@ -242,6 +250,29 @@
       syncError = e instanceof Error ? e.message : String(e);
     } finally {
       syncing = false;
+    }
+  }
+
+  async function handleReauthAndSync() {
+    if (!reauthPassword) { reauthError = "Enter the new master password."; return; }
+    reauthLoading = true;
+    reauthError = "";
+    try {
+      const result: any = await invoke("reauth_and_sync", { newMasterPassword: reauthPassword });
+      showReauthModal = false;
+      reauthPassword = "";
+      if (result.status === "conflicts") {
+        pendingConflicts = result.conflicts;
+        showConflictModal = true;
+      } else {
+        needsSync = false;
+        await loadData();
+        await loadSyncStatus();
+      }
+    } catch (e) {
+      reauthError = e instanceof Error ? e.message : String(e);
+    } finally {
+      reauthLoading = false;
     }
   }
 
@@ -445,6 +476,71 @@
           onCancel={() => showConflictModal = false}
         />
     {/if}
+
+    <!-- Re-auth Modal: master password changed on another device -->
+    {#if showReauthModal}
+      <div
+        class="modal-overlay"
+        role="presentation"
+        onclick={() => { showReauthModal = false; reauthPassword = ""; reauthError = ""; }}
+        onkeydown={(e) => e.key === 'Escape' && (showReauthModal = false)}
+      >
+        <div
+          class="reauth-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Master password changed"
+          onclick={(e) => e.stopPropagation()}
+          onkeydown={(e) => e.stopPropagation()}
+          tabindex="-1"
+        >
+          <div class="reauth-icon">🔑</div>
+          <h3>Master Password Changed</h3>
+          <p class="reauth-desc">
+            The vault on Google Drive was re-encrypted with a new master password
+            (changed on another device). Enter the new master password to sync
+            and update this device.
+          </p>
+
+          <div class="reauth-field">
+            <label for="reauth-pw">New Master Password</label>
+            <input
+              id="reauth-pw"
+              type="password"
+              bind:value={reauthPassword}
+              placeholder="Enter the new master password"
+              disabled={reauthLoading}
+              onkeydown={(e) => e.key === 'Enter' && handleReauthAndSync()}
+            />
+          </div>
+
+          {#if reauthError}
+            <div class="reauth-error">{reauthError}</div>
+          {/if}
+
+          <div class="reauth-actions">
+            <button
+              class="btn-reauth-cancel"
+              onclick={() => { showReauthModal = false; reauthPassword = ""; reauthError = ""; }}
+              disabled={reauthLoading}
+            >
+              Cancel
+            </button>
+            <button
+              class="btn-reauth-confirm"
+              onclick={handleReauthAndSync}
+              disabled={reauthLoading}
+            >
+              {#if reauthLoading}
+                <span class="sync-spin">⟳</span> Syncing…
+              {:else}
+                Sync & Update Password
+              {/if}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
  </div>
 
 <style>
@@ -631,6 +727,130 @@
   }
 
   .resolve-btn { color: #c53030; border-color: #feb2b2; }
+
+  /* Re-auth modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .reauth-modal {
+    background: white;
+    border-radius: 12px;
+    padding: 32px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+    text-align: center;
+  }
+
+  .reauth-icon {
+    font-size: 2.5rem;
+    margin-bottom: 12px;
+  }
+
+  .reauth-modal h3 {
+    margin: 0 0 10px;
+    color: #1a202c;
+    font-size: 1.2rem;
+  }
+
+  .reauth-desc {
+    color: #4a5568;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    margin: 0 0 20px;
+  }
+
+  .reauth-field {
+    text-align: left;
+    margin-bottom: 16px;
+  }
+
+  .reauth-field label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #4a5568;
+    margin-bottom: 6px;
+  }
+
+  .reauth-field input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 14px;
+    box-sizing: border-box;
+    transition: border-color 0.2s;
+  }
+
+  .reauth-field input:focus {
+    outline: none;
+    border-color: #667eea;
+  }
+
+  .reauth-field input:disabled {
+    background: #f0f0f0;
+    cursor: not-allowed;
+  }
+
+  .reauth-error {
+    background: #fed7d7;
+    color: #c53030;
+    border: 1px solid #feb2b2;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 0.875rem;
+    text-align: left;
+    margin-bottom: 16px;
+  }
+
+  .reauth-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  .btn-reauth-cancel {
+    flex: 0 0 auto;
+    padding: 10px 16px;
+    background: #edf2f7;
+    color: #4a5568;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-reauth-cancel:hover:not(:disabled) { background: #e2e8f0; }
+  .btn-reauth-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-reauth-confirm {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-reauth-confirm:hover:not(:disabled) { background: #5a67d8; }
+  .btn-reauth-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
 
   @media (max-width: 768px) {
     .dashboard-header,

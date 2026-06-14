@@ -53,6 +53,39 @@
     }
   }
 
+  // ── Change master password ────────────────────────────────────────────────
+
+  let currentPassword = $state("");
+  let newPassword = $state("");
+  let confirmPassword = $state("");
+  let pwLoading = $state(false);
+  let pwError = $state("");
+  let pwSuccess = $state("");
+
+  async function changePassword() {
+    pwError = "";
+    pwSuccess = "";
+
+    if (!currentPassword) { pwError = "Enter your current password."; return; }
+    if (newPassword.length < 8) { pwError = "New password must be at least 8 characters."; return; }
+    if (newPassword !== confirmPassword) { pwError = "New passwords do not match."; return; }
+    if (newPassword === currentPassword) { pwError = "New password must be different from the current one."; return; }
+
+    pwLoading = true;
+    try {
+      await invoke("change_master_password", { currentPassword, newPassword });
+      pwSuccess = "Master password changed successfully!";
+      currentPassword = "";
+      newPassword = "";
+      confirmPassword = "";
+      setTimeout(() => pwSuccess = "", 4000);
+    } catch (e) {
+      pwError = e instanceof Error ? e.message : String(e);
+    } finally {
+      pwLoading = false;
+    }
+  }
+
   // ── Cloud storage ──────────────────────────────────────────────────────────
 
   let syncStatus = $state<{ connected: boolean; lastSync: string | null; hasPendingConflicts: boolean } | null>(null);
@@ -196,6 +229,62 @@
           </div>
           <p class="setting-description">
             Automatically clear copied passwords from clipboard after this time.
+          </p>
+        </div>
+      </div>
+
+      <!-- Change Master Password -->
+      <div class="settings-section">
+        <h3>🔑 Change Master Password</h3>
+        <div class="setting-group">
+          <div class="pw-field">
+            <label for="current-pw">Current Password</label>
+            <input
+              id="current-pw"
+              type="password"
+              bind:value={currentPassword}
+              placeholder="Enter current password"
+              disabled={pwLoading}
+            />
+          </div>
+          <div class="pw-field">
+            <label for="new-pw">New Password</label>
+            <input
+              id="new-pw"
+              type="password"
+              bind:value={newPassword}
+              placeholder="At least 8 characters"
+              disabled={pwLoading}
+            />
+          </div>
+          <div class="pw-field">
+            <label for="confirm-pw">Confirm New Password</label>
+            <input
+              id="confirm-pw"
+              type="password"
+              bind:value={confirmPassword}
+              placeholder="Repeat new password"
+              disabled={pwLoading}
+            />
+          </div>
+
+          {#if pwError}
+            <div class="error-message" style="margin-top:10px">{pwError}</div>
+          {/if}
+          {#if pwSuccess}
+            <div class="success-message" style="margin-top:10px">{pwSuccess}</div>
+          {/if}
+
+          <button class="btn-change-pw" onclick={changePassword} disabled={pwLoading} style="margin-top:14px">
+            {#if pwLoading}
+              <span class="spinner"></span> Changing…
+            {:else}
+              Change Password
+            {/if}
+          </button>
+
+          <p class="setting-description" style="margin-top:10px">
+            A new encryption key will be derived from the new password. If Google Drive sync is active, the vault will be re-uploaded automatically.
           </p>
         </div>
       </div>
@@ -576,6 +665,56 @@
   }
 
   .btn-cloud-disconnect:hover { background: #fed7d7; color: #c53030; border-color: #feb2b2; }
+
+  .pw-field {
+    margin-bottom: 14px;
+  }
+
+  .pw-field label {
+    display: block;
+    margin-bottom: 6px;
+    color: #4a5568;
+    font-weight: 500;
+    font-size: 0.875rem;
+  }
+
+  .pw-field input[type="password"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 14px;
+    box-sizing: border-box;
+    transition: border-color 0.2s;
+  }
+
+  .pw-field input[type="password"]:focus {
+    outline: none;
+    border-color: #667eea;
+  }
+
+  .pw-field input[type="password"]:disabled {
+    background: #f0f0f0;
+    cursor: not-allowed;
+  }
+
+  .btn-change-pw {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-change-pw:hover:not(:disabled) { background: #5a67d8; }
+  .btn-change-pw:disabled { opacity: 0.6; cursor: not-allowed; }
 
   @media (max-width: 768px) {
     .modal-content {
