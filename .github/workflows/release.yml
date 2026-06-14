@@ -113,13 +113,13 @@ jobs:
           repository: VenkatesanNarayanan/securepass-web
           token: ${{ secrets.WEB_REPO_PAT }}
 
-      - name: Write latest-release.json
+      - name: Write release-data.js
         run: |
           TAG="${{ github.ref_name }}"
           VER="${TAG#v}"
           BASE="https://github.com/VenkatesanNarayanan/SecurePass/releases/download/${TAG}"
-          cat > latest-release.json <<EOF
-          {
+          cat > release-data.js <<EOF
+          window.SECUREPASS_RELEASE = {
             "version": "${VER}",
             "tag": "${TAG}",
             "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -150,14 +150,14 @@ jobs:
                 "url": "${BASE}/securepass_${VER}_amd64.deb"
               }
             }
-          }
+          };
           EOF
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add latest-release.json
+          git add release-data.js
           git diff --staged --quiet && echo "No changes" || \
             git commit -m "chore: update download links for ${{ github.ref_name }}"
           git push
