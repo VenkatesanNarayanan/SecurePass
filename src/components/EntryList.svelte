@@ -27,6 +27,10 @@
 
   const CATEGORY_ORDER = ['web-app', 'ssh-server', 'bank-financial', 'email', 'wi-fi', 'generic'];
 
+  const byTitle = (a: any, b: any) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+
+  const sortedEntries = $derived([...entries].sort(byTitle));
+
   const groupedEntries = $derived.by(() => {
     if (!groupByCategory) return [];
 
@@ -43,7 +47,7 @@
         category: cat,
         icon: getCategoryIcon(cat),
         label: cat.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
-        entries: map.get(cat)!
+        entries: [...map.get(cat)!].sort(byTitle)
       }));
 
     const customGroups = [...map.keys()]
@@ -53,7 +57,7 @@
         category: cat,
         icon: getCategoryIcon(cat),
         label: cat.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
-        entries: map.get(cat)!
+        entries: [...map.get(cat)!].sort(byTitle)
       }));
 
     return [...knownGroups, ...customGroups];
@@ -133,7 +137,7 @@
     </div>
   {:else}
     <div class="entries-grid">
-      {#each entries as entry (entry.id)}
+      {#each sortedEntries as entry (entry.id)}
          <div
            class="entry-card"
            onclick={() => onViewEntry(entry)}
