@@ -101,3 +101,63 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           gh release upload "${{ github.ref_name }}" "SecurePass_${VERSION}_macos.pkg" --clobber
+
+  # ── Update securepass-web with latest download links ──────────────────────
+  publish-web:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout securepass-web
+        uses: actions/checkout@v4
+        with:
+          repository: VenkatesanNarayanan/securepass-web
+          token: ${{ secrets.WEB_REPO_PAT }}
+
+      - name: Write latest-release.json
+        run: |
+          TAG="${{ github.ref_name }}"
+          VER="${TAG#v}"
+          BASE="https://github.com/VenkatesanNarayanan/SecurePass/releases/download/${TAG}"
+          cat > latest-release.json <<EOF
+          {
+            "version": "${VER}",
+            "tag": "${TAG}",
+            "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "macos": {
+                "label": "macOS (PKG — Recommended)",
+                "url": "${BASE}/SecurePass_${VER}_macos.pkg",
+                "note": "Right-click → Open on first launch"
+              },
+              "macos_dmg": {
+                "label": "macOS (DMG — Apple Silicon)",
+                "url": "${BASE}/SecurePass_${VER}_aarch64.dmg"
+              },
+              "windows_msi": {
+                "label": "Windows (MSI Installer)",
+                "url": "${BASE}/SecurePass_${VER}_x64_en-US.msi"
+              },
+              "windows_exe": {
+                "label": "Windows (EXE Setup)",
+                "url": "${BASE}/SecurePass_${VER}_x64-setup.exe"
+              },
+              "linux_appimage": {
+                "label": "Linux (AppImage)",
+                "url": "${BASE}/securepass_${VER}_amd64.AppImage"
+              },
+              "linux_deb": {
+                "label": "Linux (DEB — Ubuntu / Debian)",
+                "url": "${BASE}/securepass_${VER}_amd64.deb"
+              }
+            }
+          }
+          EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add latest-release.json
+          git diff --staged --quiet && echo "No changes" || \
+            git commit -m "chore: update download links for ${{ github.ref_name }}"
+          git push
