@@ -138,8 +138,12 @@ jobs:
       - name: Write release-data.js
         run: |
           TAG="${{ github.ref_name }}"
-          VER="${TAG#v}"
           BASE="releases/${TAG}"
+          # Detect the real file version from the PKG filename (comes from package.json,
+          # not the git tag — e.g. tag v1.1.13 but files named SecurePass_1.0.0_*.*)
+          PKG=$(ls releases/${TAG}/*.pkg 2>/dev/null | head -1)
+          FILE_VER=$(basename "$PKG" | sed 's/SecurePass_//; s/_macos\.pkg//')
+          VER="${FILE_VER}"
           cat > release-data.js <<EOF
           window.SECUREPASS_RELEASE = {
             "version": "${VER}",
