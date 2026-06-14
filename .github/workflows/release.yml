@@ -24,39 +24,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Install Node (Frontend)
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
 
-      # Install Rust (Backend)
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # Linux dependencies
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            curl \
-            wget \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libjavascriptcoregtk-4.1-dev \
-            libsoup-3.0-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf
+            build-essential curl wget \
+            libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
 
-      # Install frontend deps
       - name: Install frontend dependencies
         run: npm install
 
-      # Build & Publish Release
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0.5.15
         env:
@@ -70,22 +59,16 @@ jobs:
           prerelease: false
           includeBundledTauri: true
 
-      # macOS: wrap the .app in a .pkg with a post-install script that removes
-      # the quarantine flag automatically, so users never need to run xattr manually.
       - name: Create macOS PKG installer
         if: matrix.platform == 'macos-latest'
         run: |
           APP_PATH=$(find src-tauri/target/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
           VERSION=$(node -p "require('./package.json').version")
-
           mkdir -p _pkg_staging/Applications _pkg_scripts
-
           cp -r "$APP_PATH" _pkg_staging/Applications/
-
           printf '#!/bin/bash\nxattr -dr com.apple.quarantine "/Applications/SecurePass.app" 2>/dev/null || true\n' \
             > _pkg_scripts/postinstall
           chmod +x _pkg_scripts/postinstall
-
           pkgbuild \
             --root _pkg_staging \
             --scripts _pkg_scripts \
@@ -93,76 +76,40 @@ jobs:
             --version "$VERSION" \
             "SecurePass_${VERSION}_macos.pkg"
 
-      # ── Upload artifacts to Cloudflare R2 ─────────────────────────────────
-      - name: Upload macOS artifacts to R2
+      # Collect built files into a staging folder before upload
+      - name: Collect macOS artifacts
         if: matrix.platform == 'macos-latest'
         shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
         run: |
-          TAG="${{ github.ref_name }}"
           VER=$(node -p "require('./package.json').version")
-          EP="https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-          B="${{ secrets.R2_BUCKET_NAME }}"
+          mkdir -p _release_artifacts
+          cp "SecurePass_${VER}_macos.pkg" _release_artifacts/
+          cp src-tauri/target/release/bundle/dmg/*.dmg _release_artifacts/ 2>/dev/null || true
 
-          # PKG (custom installer)
-          aws s3 cp "SecurePass_${VER}_macos.pkg" \
-            "s3://${B}/${TAG}/SecurePass_${VER}_macos.pkg" \
-            --endpoint-url "$EP"
-
-          # DMG (from tauri-action)
-          for f in src-tauri/target/release/bundle/dmg/*.dmg; do
-            aws s3 cp "$f" "s3://${B}/${TAG}/$(basename "$f")" \
-              --endpoint-url "$EP"
-          done
-
-      - name: Upload Windows artifacts to R2
+      - name: Collect Windows artifacts
         if: matrix.platform == 'windows-latest'
         shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
         run: |
-          TAG="${{ github.ref_name }}"
-          EP="https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-          B="${{ secrets.R2_BUCKET_NAME }}"
+          mkdir -p _release_artifacts
+          cp src-tauri/target/release/bundle/msi/*.msi       _release_artifacts/ 2>/dev/null || true
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe _release_artifacts/ 2>/dev/null || true
 
-          for f in src-tauri/target/release/bundle/msi/*.msi; do
-            aws s3 cp "$f" "s3://${B}/${TAG}/$(basename "$f")" \
-              --endpoint-url "$EP"
-          done
-
-          for f in src-tauri/target/release/bundle/nsis/*-setup.exe; do
-            aws s3 cp "$f" "s3://${B}/${TAG}/$(basename "$f")" \
-              --endpoint-url "$EP"
-          done
-
-      - name: Upload Linux artifacts to R2
+      - name: Collect Linux artifacts
         if: matrix.platform == 'ubuntu-latest'
         shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
         run: |
-          TAG="${{ github.ref_name }}"
-          EP="https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-          B="${{ secrets.R2_BUCKET_NAME }}"
+          mkdir -p _release_artifacts
+          cp src-tauri/target/release/bundle/appimage/*.AppImage _release_artifacts/ 2>/dev/null || true
+          cp src-tauri/target/release/bundle/deb/*.deb            _release_artifacts/ 2>/dev/null || true
 
-          for f in src-tauri/target/release/bundle/appimage/*.AppImage; do
-            aws s3 cp "$f" "s3://${B}/${TAG}/$(basename "$f")" \
-              --endpoint-url "$EP"
-          done
+      - name: Upload artifacts for publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ matrix.platform }}
+          path: _release_artifacts/
+          retention-days: 1
 
-          for f in src-tauri/target/release/bundle/deb/*.deb; do
-            aws s3 cp "$f" "s3://${B}/${TAG}/$(basename "$f")" \
-              --endpoint-url "$EP"
-          done
-
-  # ── Update securepass-web with R2 download links ──────────────────────────
+  # ── Push release binaries to securepass-web and update download links ──────
   publish-web:
     needs: build
     runs-on: ubuntu-latest
@@ -173,11 +120,26 @@ jobs:
           repository: VenkatesanNarayanan/securepass-web
           token: ${{ secrets.WEB_REPO_PAT }}
 
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-artifacts-*
+          path: _all_artifacts
+          merge-multiple: true
+
+      - name: Copy artifacts into releases directory
+        run: |
+          TAG="${{ github.ref_name }}"
+          mkdir -p "releases/${TAG}"
+          cp _all_artifacts/* "releases/${TAG}/"
+          echo "Files in releases/${TAG}:"
+          ls -lh "releases/${TAG}/"
+
       - name: Write release-data.js
         run: |
           TAG="${{ github.ref_name }}"
           VER="${TAG#v}"
-          BASE="${{ secrets.R2_PUBLIC_URL }}/${TAG}"
+          BASE="releases/${TAG}"
           cat > release-data.js <<EOF
           window.SECUREPASS_RELEASE = {
             "version": "${VER}",
@@ -217,7 +179,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add release-data.js
+          git add "releases/${{ github.ref_name }}" release-data.js
           git diff --staged --quiet && echo "No changes" || \
-            git commit -m "chore: update download links for ${{ github.ref_name }}"
+            git commit -m "release: add binaries and update download links for ${{ github.ref_name }}"
           git push
