@@ -99,8 +99,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p _release_artifacts
-          cp src-tauri/target/release/bundle/appimage/*.AppImage _release_artifacts/ 2>/dev/null || true
-          cp src-tauri/target/release/bundle/deb/*.deb            _release_artifacts/ 2>/dev/null || true
+          # AppImage excluded: Cloudflare Pages has a 25 MiB file limit; AppImage is ~78 MiB.
+          # To re-enable: uncomment the line below and host via a separate CDN/R2 bucket.
+          # cp src-tauri/target/release/bundle/appimage/*.AppImage _release_artifacts/ 2>/dev/null || true
+          cp src-tauri/target/release/bundle/deb/*.deb _release_artifacts/ 2>/dev/null || true
 
       - name: Upload artifacts for publish job
         uses: actions/upload-artifact@v4
@@ -167,13 +169,9 @@ jobs:
                 "label": "Windows (EXE Setup)",
                 "url": "${BASE}/SecurePass_${VER}_x64-setup.exe"
               },
-              "linux_appimage": {
-                "label": "Linux (AppImage)",
-                "url": "${BASE}/securepass_${VER}_amd64.AppImage"
-              },
               "linux_deb": {
                 "label": "Linux (DEB — Ubuntu / Debian)",
-                "url": "${BASE}/securepass_${VER}_amd64.deb"
+                "url": "${BASE}/SecurePass_${VER}_amd64.deb"
               }
             }
           };
