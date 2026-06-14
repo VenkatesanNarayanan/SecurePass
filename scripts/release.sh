@@ -2,9 +2,17 @@
 set -euo pipefail
 
 VERSION="${1:-}"
+MESSAGE="${2:-}"
 
 if [[ -z "$VERSION" ]]; then
-  echo "Usage: ./scripts/release.sh <version>   e.g. ./scripts/release.sh 1.1.14"
+  echo "Usage: ./scripts/release.sh <version> \"<release message>\""
+  echo "  e.g. ./scripts/release.sh 1.1.16 \"fix: auto-sync after add/delete, merge on import\""
+  exit 1
+fi
+
+if [[ -z "$MESSAGE" ]]; then
+  echo "Error: release message is required."
+  echo "  e.g. ./scripts/release.sh 1.1.16 \"fix: auto-sync after add/delete, merge on import\""
   exit 1
 fi
 
@@ -12,7 +20,7 @@ fi
 VERSION="${VERSION#v}"
 TAG="v${VERSION}"
 
-echo "Releasing ${TAG}..."
+echo "Releasing ${TAG}: ${MESSAGE}"
 
 # ── Bump package.json ──────────────────────────────────────────────────────
 node -e "
@@ -34,8 +42,8 @@ node -e "
 
 # ── Commit, tag, push ──────────────────────────────────────────────────────
 git add package.json src-tauri/tauri.conf.json
-git commit -m "chore: bump version to ${VERSION}"
-git tag "${TAG}"
+git commit -m "${MESSAGE}"
+git tag -a "${TAG}" -m "${MESSAGE}"
 git push
 git push origin "${TAG}"
 
