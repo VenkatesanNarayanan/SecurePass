@@ -1,6 +1,6 @@
 {
   "name": "securepass",
-  "version": "1.1.14",
+  "version": "1.1.15",
   "description": "SecurePass - Encrypted Password Manager with Military-Grade Security",
   "type": "module",
   "scripts": {
