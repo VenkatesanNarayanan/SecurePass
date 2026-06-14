@@ -177,11 +177,22 @@ jobs:
           };
           EOF
 
+      - name: Prune old releases (keep 2 most recent)
+        run: |
+          # Sort release dirs by version descending, remove anything beyond the 2 newest.
+          if [ -d releases ]; then
+            mapfile -t OLD < <(ls -d releases/v* 2>/dev/null | sort -V -r | tail -n +3)
+            for dir in "${OLD[@]}"; do
+              echo "Removing old release: $dir"
+              git rm -rf "$dir"
+            done
+          fi
+
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "releases/${{ github.ref_name }}" release-data.js
           git diff --staged --quiet && echo "No changes" || \
-            git commit -m "release: add binaries and update download links for ${{ github.ref_name }}"
+            git commit -m "release: add binaries for ${{ github.ref_name }}, prune old releases"
           git push
