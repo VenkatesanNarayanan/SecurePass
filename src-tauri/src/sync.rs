@@ -165,8 +165,15 @@ fn open_in_browser(url: &str) -> Result<(), String> {
     std::process::Command::new("open").arg(url).spawn().map_err(|e| e.to_string())?;
     #[cfg(target_os = "linux")]
     std::process::Command::new("xdg-open").arg(url).spawn().map_err(|e| e.to_string())?;
+    // Note: `cmd /c start "" <url>` is unsafe here because cmd.exe treats
+    // unescaped `&` as a command separator, truncating query strings with
+    // multiple params (e.g. our OAuth URL) at the first `&`. rundll32 passes
+    // the URL straight to the DLL without cmd's command-line reparsing.
     #[cfg(target_os = "windows")]
-    std::process::Command::new("cmd").args(["/c", "start", "", url]).spawn().map_err(|e| e.to_string())?;
+    std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
