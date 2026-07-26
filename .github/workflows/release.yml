@@ -164,11 +164,13 @@ jobs:
               },
               "windows_msi": {
                 "label": "Windows (MSI Installer)",
-                "url": "${BASE}/SecurePass_${VER}_x64_en-US.msi"
+                "url": "${BASE}/SecurePass_${VER}_x64_en-US.msi",
+                "note": "SmartScreen may warn — click 'More info' → 'Run anyway'"
               },
               "windows_exe": {
                 "label": "Windows (EXE Setup)",
-                "url": "${BASE}/SecurePass_${VER}_x64-setup.exe"
+                "url": "${BASE}/SecurePass_${VER}_x64-setup.exe",
+                "note": "SmartScreen may warn — click 'More info' → 'Run anyway'"
               },
               "linux_deb": {
                 "label": "Linux (DEB — Ubuntu / Debian)",
