@@ -4,6 +4,20 @@ use argon2::{Argon2, Params, Algorithm, Version};
 use rand::RngCore;
 use rand::rngs::OsRng;
 
+/// Argon2id cost parameters used for every vault.
+///
+/// These are NOT stored in the vault file, so changing any of them makes
+/// every existing vault (local, `.spvault` backups and the Drive copy)
+/// impossible to unlock. `test_key_derivation_is_stable` pins them; a change
+/// needs a versioned vault header and a migration first.
+///
+/// `argon2`'s memory cost is in KiB blocks: 65_536 KiB = 64 MiB.
+/// 64 MiB / 3 passes is RFC 9106's second recommended setting (with 1 lane
+/// instead of 4) and above OWASP's Argon2id minimums.
+pub const ARGON2_MEMORY_KIB: u32 = 64 * 1024;
+pub const ARGON2_ITERATIONS: u32 = 3;
+pub const ARGON2_PARALLELISM: u32 = 1;
+
 /// Cryptographic manager for SecurePass encryption operations
 pub struct CryptoManager {
     key: Key,
@@ -16,7 +30,8 @@ impl CryptoManager {
         let argon2 = Argon2::new(
             Algorithm::Argon2id,
             Version::V0x13,
-            Params::new(65536, 3, 1, None).unwrap(), // 64 KiB, 3 iterations, 1 thread
+            Params::new(ARGON2_MEMORY_KIB, ARGON2_ITERATIONS, ARGON2_PARALLELISM, None)
+                .map_err(|e| format!("Invalid Argon2 parameters: {}", e))?,
         );
 
         argon2.hash_password_into(master_password.as_bytes(), salt, &mut key)
@@ -98,6 +113,21 @@ mod tests {
 
         assert_eq!(key1, key2, "Same password and salt should produce same key");
     }
+
+    /// Known-answer test: a fixed password and salt must always give this key.
+    /// If it fails, the Argon2 parameters or algorithm changed, and existing
+    /// vaults would no longer unlock. See the ARGON2_* constants.
+    #[test]
+    fn test_key_derivation_is_stable() {
+        let salt = [7u8; 32];
+        let key = CryptoManager::derive_key("correct horse battery staple", &salt).unwrap();
+        let hex: String = key.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(hex, EXPECTED_KAT_KEY_HEX, "Argon2 key derivation changed — existing vaults would not unlock");
+    }
+
+    // Produced by Argon2id v0x13, 64 MiB, 3 iterations, 1 lane (the settings
+    // every vault since v1.0 was created with).
+    const EXPECTED_KAT_KEY_HEX: &str = "a946e7002480e5e1a79524aee83439e85f78bbe4837183d7b66ed45adcd48261";
 
     #[test]
     fn test_encrypt_decrypt() {

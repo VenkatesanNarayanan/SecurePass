@@ -15,7 +15,7 @@ A secure, cross-platform password manager built with Rust and Svelte, featuring 
 
 ### 🔒 Security First
 - **Military-grade encryption** using ChaCha20-Poly1305 AEAD
-- **Argon2id key derivation** (64 KiB memory, 3 iterations) for master password hashing
+- **Argon2id key derivation** (64 MiB memory, 3 iterations) for master password hashing
 - **Secure memory handling** with automatic key zeroization on lock
 - **Zero plaintext storage** — passwords never written unencrypted to disk
 - **Change master password** — re-derives a new key with a fresh salt and re-encrypts the entire vault
@@ -205,7 +205,7 @@ npm audit                 # Audit npm deps
 | Property | Value |
 |----------|-------|
 | Algorithm | ChaCha20-Poly1305 (AEAD) |
-| Key derivation | Argon2id — 64 KiB memory, 3 iterations, 1 thread |
+| Key derivation | Argon2id — 64 MiB memory, 3 iterations, 1 lane |
 | Salt | 32 bytes, random, stored in vault file header |
 | Nonce | 12 bytes, random per save |
 | Key size | 256 bits |
