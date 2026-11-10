@@ -10,6 +10,8 @@
     /** True when a search or category filter is active (changes the empty state). */
     filtered?: boolean;
     showCategory?: boolean;
+    /** entry id → epoch ms of last use on this device (see $lib/recent). */
+    recentUse?: Record<string, number>;
     onSelect: (entry: any) => void;
     onCreate: () => void;
   }
@@ -21,19 +23,26 @@
     loading = false,
     filtered = false,
     showCategory = true,
+    recentUse = {},
     onSelect,
     onCreate,
   }: Props = $props();
 
-  type SortMode = "recent" | "az";
+  type SortMode = "used" | "updated" | "az";
+  const SORTS: { mode: SortMode; label: string }[] = [
+    { mode: "used", label: "Recently used" },
+    { mode: "updated", label: "Recently updated" },
+    { mode: "az", label: "A–Z" },
+  ];
   let sortMode = $state<SortMode>(readSort());
 
   function readSort(): SortMode {
     try {
-      return localStorage.getItem("sp_list_sort") === "az" ? "az" : "recent";
-    } catch {
-      return "recent";
-    }
+      const v = localStorage.getItem("sp_list_sort");
+      if (v === "az" || v === "updated" || v === "used") return v;
+      if (v === "recent") return "updated"; // value saved before "Recently used" existed
+    } catch { /* ignore */ }
+    return "used";
   }
 
   function setSort(mode: SortMode) {
@@ -41,13 +50,30 @@
     try { localStorage.setItem("sp_list_sort", mode); } catch { /* ignore */ }
   }
 
+  const updatedMs = (e: any) => new Date(e.updated_at).getTime();
+  const byTitle = (a: any, b: any) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+
   const sorted = $derived(
-    [...entries].sort((a, b) =>
-      sortMode === "az"
-        ? a.title.localeCompare(b.title, undefined, { sensitivity: "base" })
-        : new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-    )
+    [...entries].sort((a, b) => {
+      if (sortMode === "az") return byTitle(a, b);
+      if (sortMode === "used") {
+        // Used entries first (most recent use on top); never-used ones after,
+        // by last update.
+        const ua = recentUse[a.id] ?? 0;
+        const ub = recentUse[b.id] ?? 0;
+        if (ua !== ub) return ub - ua;
+      }
+      return updatedMs(b) - updatedMs(a) || byTitle(a, b);
+    })
   );
+
+  function metaTime(entry: any): string {
+    if (sortMode === "used") {
+      const used = recentUse[entry.id];
+      return used ? `Used ${relativeTime(new Date(used).toISOString())}` : "Not used yet";
+    }
+    return relativeTime(entry.updated_at);
+  }
 
   // Arrow-key navigation between rows.
   function handleKeydown(event: KeyboardEvent) {
@@ -77,8 +103,9 @@
   </header>
 
   <div class="sort" role="group" aria-label="Sort entries">
-    <button class="chip" class:on={sortMode === "recent"} aria-pressed={sortMode === "recent"} onclick={() => setSort("recent")}>Recently updated</button>
-    <button class="chip" class:on={sortMode === "az"} aria-pressed={sortMode === "az"} onclick={() => setSort("az")}>A–Z</button>
+    {#each SORTS as s (s.mode)}
+      <button class="chip" class:on={sortMode === s.mode} aria-pressed={sortMode === s.mode} onclick={() => setSort(s.mode)}>{s.label}</button>
+    {/each}
   </div>
 
   <div class="rows" role="listbox" aria-label={heading} tabindex="-1" onkeydown={handleKeydown}>
@@ -112,7 +139,7 @@
           <span class="text">
             <span class="title">{entry.title}</span>
             <span class="meta">
-              {#if showCategory}{cat.label} · {/if}{relativeTime(entry.updated_at)}
+              {#if showCategory}{cat.label} · {/if}{metaTime(entry)}
             </span>
           </span>
         </button>
@@ -144,7 +171,7 @@
   }
   .sub { font-size: 12px; color: var(--text-muted); }
 
-  .sort { display: flex; gap: 6px; padding: 0 16px 10px; }
+  .sort { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 10px; }
   .chip {
     font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 0; cursor: pointer;
     background: var(--chip); color: var(--text-2);

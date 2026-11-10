@@ -8,6 +8,7 @@
   import ConflictResolutionModal from "./ConflictResolutionModal.svelte";
   import Icon from "./Icon.svelte";
   import { categoryMeta } from "$lib/categories";
+  import { loadRecentUse, markUsed, pruneRecentUse, type RecentUse } from "$lib/recent";
 
   interface Props {
     vaultStatus: any;
@@ -25,6 +26,12 @@
   let selectedCategory = $state("");
   let loading = $state(false);
   let searchInput = $state<HTMLInputElement | null>(null);
+  // Per-device "recently used" times for the list's sort (see $lib/recent).
+  let recentUse = $state<RecentUse>(loadRecentUse());
+
+  function handleEntryUsed() {
+    if (selectedId) recentUse = markUsed(recentUse, selectedId);
+  }
 
   // ── Detail pane ────────────────────────────────────────────────────────────
   type PaneMode = "empty" | "view" | "edit" | "new";
@@ -115,6 +122,8 @@
   async function loadAll() {
     try {
       allEntries = await invoke<any[]>("get_entries");
+      // Forget usage of entries that were deleted (here or via sync).
+      recentUse = pruneRecentUse(recentUse, allEntries.map((e) => e.id));
     } catch (error) {
       console.error("Failed to load entries:", error);
     }
@@ -484,6 +493,7 @@
         {loading}
         filtered={!!(searchQuery || selectedCategory)}
         showCategory={!selectedCategory}
+        {recentUse}
         onSelect={selectEntry}
         onCreate={handleCreateEntry}
       />
@@ -496,7 +506,7 @@
             <EntryForm entry={selectedEntry} onSaved={handleSaved} onCancel={handleFormCancel} />
           {/key}
         {:else if paneMode === "view" && selectedEntry}
-          <EntryView entry={selectedEntry} onEdit={handleEditEntry} onDeleted={handleDeleted} onCopied={handleCopied} />
+          <EntryView entry={selectedEntry} onEdit={handleEditEntry} onDeleted={handleDeleted} onCopied={handleCopied} onUsed={handleEntryUsed} />
         {:else}
           <div class="empty">
             <span class="empty-mark"><Icon name="shield" size={26} strokeWidth={1.8} /></span>

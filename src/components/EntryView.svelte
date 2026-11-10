@@ -11,9 +11,16 @@
     onEdit: () => void;
     onDeleted: () => void;
     onCopied: (label: string, seconds: number) => void;
+    /** Called when a field is copied, a secret revealed or a link opened. */
+    onUsed?: () => void;
   }
 
-  let { entry, onEdit, onDeleted, onCopied }: Props = $props();
+  let { entry, onEdit, onDeleted, onCopied, onUsed }: Props = $props();
+
+  function toggleReveal(name: string) {
+    revealed[name] = !revealed[name];
+    if (revealed[name]) onUsed?.();
+  }
 
   let revealed = $state<Record<string, boolean>>({});
   let justCopied = $state<string | null>(null);
@@ -71,6 +78,7 @@
       justCopied = field.name;
       setTimeout(() => { if (justCopied === field.name) justCopied = null; }, 1500);
       onCopied(field.name, seconds);
+      onUsed?.();
     } catch (e) {
       error = "Couldn't copy to the clipboard: " + (e instanceof Error ? e.message : String(e));
     }
@@ -80,6 +88,7 @@
     try {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
       await openUrl(url);
+      onUsed?.();
     } catch (e) {
       error = "Couldn't open the link: " + (e instanceof Error ? e.message : String(e));
     }
@@ -145,7 +154,7 @@
             {#if secret}
               <button
                 class="icon-btn"
-                onclick={() => (revealed[field.name] = !revealed[field.name])}
+                onclick={() => toggleReveal(field.name)}
                 aria-label="{revealed[field.name] ? 'Hide' : 'Reveal'} {field.name}"
                 title={revealed[field.name] ? "Hide" : "Reveal"}
               >
