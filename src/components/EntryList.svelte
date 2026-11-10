@@ -139,7 +139,7 @@
           <span class="text">
             <span class="title">{entry.title}</span>
             <span class="meta">
-              {#if showCategory}{cat.label} · {/if}{metaTime(entry)}
+              {showCategory ? `${cat.label} · ${metaTime(entry)}` : metaTime(entry)}
             </span>
           </span>
         </button>
