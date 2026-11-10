@@ -1,5 +1,20 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import Icon from "./Icon.svelte";
+  import { getThemePreference, setThemePreference, type ThemePreference } from "$lib/theme";
+
+  // Appearance applies immediately (no Save needed).
+  let theme = $state<ThemePreference>(getThemePreference());
+  const THEME_OPTIONS: { value: ThemePreference; label: string; icon: string }[] = [
+    { value: "system", label: "System", icon: "monitor" },
+    { value: "light", label: "Light", icon: "sun" },
+    { value: "dark", label: "Dark", icon: "moon" },
+  ];
+
+  function chooseTheme(value: ThemePreference) {
+    theme = value;
+    setThemePreference(value);
+  }
 
   interface Props {
     onClose: () => void;
@@ -144,7 +159,7 @@
         setTimeout(() => (cloudSuccess = ""), 4000);
         await loadSyncStatus();
       } else if (result.status === "conflicts") {
-        cloudError = `${result.conflicts.length} conflict(s) need your attention. Open the sync panel to resolve them.`;
+        cloudError = `${result.conflicts.length} conflict(s) need your attention. Close Settings and choose "Resolve conflicts" in the sidebar.`;
       }
     } catch (e) {
       cloudError = e instanceof Error ? e.message : String(e);
@@ -163,578 +178,180 @@
   loadSyncStatus();
 </script>
 
-<div
-  class="modal-overlay"
-  onclick={onClose}
-  onkeydown={(e) => e.key === 'Escape' && onClose()}
-  role="presentation"
->
+<div class="modal-overlay" onclick={onClose} onkeydown={(e) => e.key === "Escape" && onClose()} role="presentation">
   <div
-    class="modal-content"
+    class="modal wide"
     onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
+    onkeydown={(e) => { e.stopPropagation(); if (e.key === "Escape") onClose(); }}
     role="dialog"
     aria-modal="true"
-    aria-label="Settings"
+    aria-labelledby="settings-title"
     tabindex="-1"
   >
     <div class="modal-header">
-      <h2>⚙️ Settings</h2>
-      <button class="close-btn" onclick={onClose}>✕</button>
+      <h2 id="settings-title">Settings</h2>
+      <button class="icon-btn" onclick={onClose} aria-label="Close settings"><Icon name="close" size={16} /></button>
     </div>
 
-    <div class="settings-content">
-      <!-- Security Settings -->
-      <div class="settings-section">
-        <h3>🔒 Security Settings</h3>
-
-        <div class="setting-group">
-          <label for="autoLockTimeout">
-            Auto-lock Timeout
-            <span class="setting-value">{autoLockTimeout} minutes</span>
-          </label>
-          <input
-            id="autoLockTimeout"
-            type="range"
-            min="1"
-            max="60"
-            bind:value={autoLockTimeout}
-            step="1"
-          />
-          <div class="range-hints">
-            <span>1 min</span>
-            <span>60 min</span>
-          </div>
-          <p class="setting-description">
-            Automatically lock the vault after this period of inactivity.
-          </p>
-        </div>
-
-        <div class="setting-group">
-          <label for="clipboardTimeout">
-            Clipboard Auto-Clear
-            <span class="setting-value">{clipboardTimeout} seconds</span>
-          </label>
-          <input
-            id="clipboardTimeout"
-            type="range"
-            min="5"
-            max="300"
-            bind:value={clipboardTimeout}
-            step="5"
-          />
-          <div class="range-hints">
-            <span>5 sec</span>
-            <span>5 min</span>
-          </div>
-          <p class="setting-description">
-            Automatically clear copied passwords from clipboard after this time.
-          </p>
-        </div>
-      </div>
-
-      <!-- Change Master Password -->
-      <div class="settings-section">
-        <h3>🔑 Change Master Password</h3>
-        <div class="setting-group">
-          <div class="pw-field">
-            <label for="current-pw">Current Password</label>
-            <input
-              id="current-pw"
-              type="password"
-              bind:value={currentPassword}
-              placeholder="Enter current password"
-              disabled={pwLoading}
-            />
-          </div>
-          <div class="pw-field">
-            <label for="new-pw">New Password</label>
-            <input
-              id="new-pw"
-              type="password"
-              bind:value={newPassword}
-              placeholder="At least 8 characters"
-              disabled={pwLoading}
-            />
-          </div>
-          <div class="pw-field">
-            <label for="confirm-pw">Confirm New Password</label>
-            <input
-              id="confirm-pw"
-              type="password"
-              bind:value={confirmPassword}
-              placeholder="Repeat new password"
-              disabled={pwLoading}
-            />
-          </div>
-
-          {#if pwError}
-            <div class="error-message" style="margin-top:10px">{pwError}</div>
-          {/if}
-          {#if pwSuccess}
-            <div class="success-message" style="margin-top:10px">{pwSuccess}</div>
-          {/if}
-
-          <button class="btn-change-pw" onclick={changePassword} disabled={pwLoading} style="margin-top:14px">
-            {#if pwLoading}
-              <span class="spinner"></span> Changing…
-            {:else}
-              Change Password
-            {/if}
-          </button>
-
-          <p class="setting-description" style="margin-top:10px">
-            A new encryption key will be derived from the new password. If Google Drive sync is active, the vault will be re-uploaded automatically.
-          </p>
-        </div>
-      </div>
-
-      <!-- Cloud Storage -->
-      <div class="settings-section">
-        <h3>☁️ Cloud Storage (Google Drive)</h3>
-
-        <div class="setting-group">
-          {#if syncStatus?.connected}
-            <div class="cloud-status connected">
-              <span class="status-dot"></span>
-              <span>Connected to Google Drive</span>
-            </div>
-            <p class="setting-description">
-              Last synced: {formatLastSync(syncStatus.lastSync)}
-            </p>
-            <div class="cloud-actions">
-              <button
-                class="btn-cloud-sync"
-                onclick={syncNow}
-                disabled={syncing}
-              >
-                {#if syncing}
-                  <span class="spinner"></span> Syncing…
-                {:else}
-                  Sync Now
-                {/if}
-              </button>
-              <button class="btn-cloud-disconnect" onclick={disconnectGoogleDrive}>
-                Disconnect
-              </button>
-            </div>
-          {:else}
-            <div class="cloud-status disconnected">
-              <span class="status-dot"></span>
-              <span>Not connected</span>
-            </div>
-            <p class="setting-description">
-              Connect your Google Drive to sync your encrypted vault across all your devices.
-              Only files created by SecurePass are accessible to the app.
-            </p>
+    <div class="modal-body settings">
+      <!-- Appearance -->
+      <section class="section">
+        <h3>Appearance</h3>
+        <div class="segmented" role="radiogroup" aria-label="Theme">
+          {#each THEME_OPTIONS as opt (opt.value)}
             <button
-              class="btn-cloud-connect"
-              onclick={connectGoogleDrive}
-              disabled={cloudLoading}
+              type="button"
+              role="radio"
+              aria-checked={theme === opt.value}
+              class:on={theme === opt.value}
+              onclick={() => chooseTheme(opt.value)}
             >
-              {#if cloudLoading}
-                <span class="spinner"></span> Waiting for Google sign-in…
-              {:else}
-                Connect Google Drive
-              {/if}
+              <Icon name={opt.icon} size={15} /> {opt.label}
             </button>
-          {/if}
-
-          {#if cloudError}
-            <div class="error-message" style="margin-top:12px">{cloudError}</div>
-          {/if}
-          {#if cloudSuccess}
-            <div class="success-message" style="margin-top:12px">{cloudSuccess}</div>
-          {/if}
+          {/each}
         </div>
-      </div>
+        <p class="hint">System follows your operating system's light or dark setting.</p>
+      </section>
 
-      <!-- Status Messages -->
-      {#if error}
-        <div class="error-message">{error}</div>
-      {/if}
+      <!-- Security -->
+      <section class="section">
+        <h3>Security</h3>
+        <div class="setting">
+          <div class="setting-top">
+            <label class="label" for="autoLockTimeout">Auto-lock after inactivity</label>
+            <span class="value mono">{autoLockTimeout} min</span>
+          </div>
+          <input id="autoLockTimeout" type="range" min="1" max="60" step="1" bind:value={autoLockTimeout} />
+          <div class="range-hints"><span>1 min</span><span>60 min</span></div>
+        </div>
+        <div class="setting">
+          <div class="setting-top">
+            <label class="label" for="clipboardTimeout">Clear copied secrets after</label>
+            <span class="value mono">{clipboardTimeout} s</span>
+          </div>
+          <input id="clipboardTimeout" type="range" min="5" max="300" step="5" bind:value={clipboardTimeout} />
+          <div class="range-hints"><span>5 s</span><span>5 min</span></div>
+        </div>
+        {#if error}<div class="msg msg-error">{error}</div>{/if}
+        {#if success}<div class="msg msg-success">{success}</div>{/if}
+        <div class="row-end">
+          <button type="button" class="btn btn-primary" onclick={saveSettings} disabled={loading}>
+            {#if loading}<span class="spinner"></span>{/if} Save security settings
+          </button>
+        </div>
+      </section>
 
-      {#if success}
-        <div class="success-message">{success}</div>
-      {/if}
+      <!-- Change master password -->
+      <section class="section">
+        <h3>Change master password</h3>
+        <div class="pw-grid">
+          <div class="field">
+            <label class="label" for="current-pw">Current password</label>
+            <input id="current-pw" class="input" type="password" bind:value={currentPassword} disabled={pwLoading} autocomplete="current-password" />
+          </div>
+          <div class="field">
+            <label class="label" for="new-pw">New password</label>
+            <input id="new-pw" class="input" type="password" bind:value={newPassword} placeholder="At least 8 characters" disabled={pwLoading} autocomplete="new-password" />
+          </div>
+          <div class="field">
+            <label class="label" for="confirm-pw">Confirm new password</label>
+            <input id="confirm-pw" class="input" type="password" bind:value={confirmPassword} disabled={pwLoading} autocomplete="new-password" />
+          </div>
+        </div>
+        {#if pwError}<div class="msg msg-error">{pwError}</div>{/if}
+        {#if pwSuccess}<div class="msg msg-success">{pwSuccess}</div>{/if}
+        <p class="hint">
+          The vault is re-encrypted with a key derived from the new password. If Google Drive sync is on,
+          the vault is re-uploaded and your other devices will ask for the new password on their next sync.
+        </p>
+        <div class="row-end">
+          <button class="btn btn-secondary" onclick={changePassword} disabled={pwLoading}>
+            {#if pwLoading}<span class="spinner"></span> Changing…{:else}Change password{/if}
+          </button>
+        </div>
+      </section>
+
+      <!-- Cloud storage -->
+      <section class="section">
+        <h3>Google Drive sync</h3>
+        {#if syncStatus?.connected}
+          <div class="cloud">
+            <span class="dot ok"></span>
+            <div class="cloud-text">
+              <div class="cloud-title">Connected</div>
+              <div class="hint">Last synced: {formatLastSync(syncStatus.lastSync)}</div>
+            </div>
+            <button class="btn btn-secondary" onclick={syncNow} disabled={syncing}>
+              {#if syncing}<span class="spinner"></span> Syncing…{:else}Sync now{/if}
+            </button>
+            <button class="btn btn-ghost" onclick={disconnectGoogleDrive}>Disconnect</button>
+          </div>
+        {:else}
+          <div class="cloud">
+            <span class="dot"></span>
+            <div class="cloud-text">
+              <div class="cloud-title">Not connected</div>
+              <div class="hint">
+                Keep an encrypted copy of your vault in your own Google Drive and sync it across devices.
+                SecurePass can only see files it created.
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick={connectGoogleDrive} disabled={cloudLoading}>
+              {#if cloudLoading}<span class="spinner"></span> Waiting for sign-in…{:else}<Icon name="cloud" size={15} /> Connect{/if}
+            </button>
+          </div>
+        {/if}
+        {#if cloudError}<div class="msg msg-error">{cloudError}</div>{/if}
+        {#if cloudSuccess}<div class="msg msg-success">{cloudSuccess}</div>{/if}
+      </section>
     </div>
 
-    <!-- Modal Actions -->
     <div class="modal-footer">
-      <button type="button" class="btn-secondary" onclick={onClose}>
-        Cancel
-      </button>
-      <button type="button" class="btn-primary" onclick={saveSettings} disabled={loading}>
-        {#if loading}
-          <span class="spinner"></span>
-          Saving...
-        {:else}
-          💾 Save Settings
-        {/if}
-      </button>
+      <button type="button" class="btn btn-secondary" onclick={onClose}>Close</button>
     </div>
   </div>
 </div>
 
 <style>
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
+  .settings { gap: 0; padding-top: 4px; }
+
+  .section {
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 18px 0; border-bottom: 1px solid var(--border-subtle);
   }
+  .section:last-child { border-bottom: 0; }
+  h3 { margin: 0; font-size: 14px; font-weight: 700; }
 
-  .modal-content {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-    max-width: 500px;
-    width: 90%;
-    max-height: 90vh;
-    overflow-y: auto;
+  .hint { margin: 0; font-size: 12px; color: var(--text-muted); }
+
+  .segmented {
+    display: inline-flex; align-self: flex-start; gap: 2px; padding: 3px;
+    border-radius: 10px; background: var(--chip);
   }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px;
-    border-bottom: 1px solid #e2e8f0;
+  .segmented button {
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 32px; padding: 0 14px; border: 0; border-radius: 8px;
+    background: transparent; color: var(--text-2); font-size: 13px; cursor: pointer;
   }
+  .segmented button.on { background: var(--bg); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 
-  .modal-header h2 {
-    margin: 0;
-    color: #2d3748;
-    font-size: 1.25rem;
-    font-weight: 600;
-  }
+  .setting { display: flex; flex-direction: column; gap: 6px; }
+  .setting-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .value { font-size: 13px; color: var(--text-2); }
+  .setting input[type="range"] { width: 100%; }
+  .range-hints { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); }
 
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: #718096;
-    padding: 4px;
-    border-radius: 4px;
-  }
+  .pw-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 
-  .close-btn:hover {
-    background-color: #f7fafc;
-    color: #2d3748;
-  }
+  .row-end { display: flex; justify-content: flex-end; }
 
-  .settings-content {
-    padding: 20px;
-  }
+  .cloud { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .cloud-text { flex: 1; min-width: 200px; }
+  .cloud-title { font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); flex: none; }
+  .dot.ok { background: var(--success); }
 
-  .settings-section {
-    margin-bottom: 24px;
-  }
-
-  .settings-section h3 {
-    margin: 0 0 16px 0;
-    color: #2d3748;
-    font-size: 1rem;
-    font-weight: 600;
-  }
-
-  .setting-group {
-    margin-bottom: 20px;
-    padding: 16px;
-    background: #f8f9fa;
-    border-radius: 8px;
-    border: 1px solid #e2e8f0;
-  }
-
-  .setting-group label {
-    display: block;
-    margin-bottom: 8px;
-    color: #4a5568;
-    font-weight: 500;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .setting-value {
-    color: #667eea;
-    font-weight: 600;
-    font-size: 14px;
-  }
-
-  .setting-group input[type="range"] {
-    width: 100%;
-    height: 6px;
-    border-radius: 3px;
-    background: #e2e8f0;
-    outline: none;
-    -webkit-appearance: none;
-    appearance: none;
-    margin: 8px 0;
-  }
-
-  .setting-group input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #667eea;
-    cursor: pointer;
-  }
-
-  .setting-group input[type="range"]::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #667eea;
-    cursor: pointer;
-    border: none;
-  }
-
-  .range-hints {
-    display: flex;
-    justify-content: space-between;
-    font-size: 12px;
-    color: #718096;
-    margin-top: 4px;
-  }
-
-  .setting-description {
-    margin: 8px 0 0 0;
-    font-size: 14px;
-    color: #718096;
-    line-height: 1.4;
-  }
-
-  .error-message {
-    background: #fed7d7;
-    color: #c53030;
-    padding: 12px;
-    border-radius: 6px;
-    margin-bottom: 16px;
-    border: 1px solid #feb2b2;
-  }
-
-  .success-message {
-    background: #c6f6d5;
-    color: #22543d;
-    padding: 12px;
-    border-radius: 6px;
-    margin-bottom: 16px;
-    border: 1px solid #9ae6b4;
-  }
-
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    padding: 20px;
-    border-top: 1px solid #e2e8f0;
-  }
-
-  .btn-secondary {
-    padding: 10px 16px;
-    background-color: #e2e8f0;
-    color: #4a5568;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  .btn-secondary:hover {
-    background-color: #cbd5e0;
-  }
-
-  .btn-primary {
-    padding: 10px 16px;
-    background-color: #667eea;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background-color: #5a67d8;
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid transparent;
-    border-top: 2px solid currentColor;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
-
-  .cloud-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 500;
-    font-size: 0.875rem;
-    margin-bottom: 8px;
-  }
-
-  .status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-  }
-
-  .connected .status-dot { background: #38a169; }
-  .disconnected .status-dot { background: #a0aec0; }
-
-  .cloud-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 12px;
-  }
-
-  .btn-cloud-connect {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 12px;
-    padding: 10px 16px;
-    background: #4285f4;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-cloud-connect:hover:not(:disabled) { background: #3367d6; }
-  .btn-cloud-connect:disabled { opacity: 0.6; cursor: not-allowed; }
-
-  .btn-cloud-sync {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    background: #667eea;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-cloud-sync:hover:not(:disabled) { background: #5a67d8; }
-  .btn-cloud-sync:disabled { opacity: 0.6; cursor: not-allowed; }
-
-  .btn-cloud-disconnect {
-    padding: 8px 14px;
-    background: #edf2f7;
-    color: #718096;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-cloud-disconnect:hover { background: #fed7d7; color: #c53030; border-color: #feb2b2; }
-
-  .pw-field {
-    margin-bottom: 14px;
-  }
-
-  .pw-field label {
-    display: block;
-    margin-bottom: 6px;
-    color: #4a5568;
-    font-weight: 500;
-    font-size: 0.875rem;
-  }
-
-  .pw-field input[type="password"] {
-    width: 100%;
-    padding: 10px 12px;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 6px;
-    font-size: 14px;
-    box-sizing: border-box;
-    transition: border-color 0.2s;
-  }
-
-  .pw-field input[type="password"]:focus {
-    outline: none;
-    border-color: #667eea;
-  }
-
-  .pw-field input[type="password"]:disabled {
-    background: #f0f0f0;
-    cursor: not-allowed;
-  }
-
-  .btn-change-pw {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 20px;
-    background: #667eea;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-change-pw:hover:not(:disabled) { background: #5a67d8; }
-  .btn-change-pw:disabled { opacity: 0.6; cursor: not-allowed; }
-
-  @media (max-width: 768px) {
-    .modal-content {
-      margin: 10px;
-      max-height: calc(100vh - 20px);
-    }
-
-    .modal-header,
-    .settings-content {
-      padding: 16px;
-    }
-
-    .modal-footer {
-      padding: 16px;
-      flex-direction: column-reverse;
-    }
-
-    .btn-primary,
-    .btn-secondary {
-      width: 100%;
-    }
+  @media (max-width: 700px) {
+    .pw-grid { grid-template-columns: minmax(0, 1fr); }
   }
 </style>

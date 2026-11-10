@@ -1,410 +1,190 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
+  import { categoryMeta, initialOf, relativeTime } from "$lib/categories";
+
   interface Props {
     entries: any[];
-    onViewEntry: (entry: any) => void;
-    onEditEntry: (entry: any) => void;
-    groupByCategory?: boolean;
+    heading: string;
+    selectedId: string | null;
+    loading?: boolean;
+    /** True when a search or category filter is active (changes the empty state). */
+    filtered?: boolean;
+    showCategory?: boolean;
+    onSelect: (entry: any) => void;
+    onCreate: () => void;
   }
 
-  let { entries, onViewEntry, onEditEntry, groupByCategory = false }: Props = $props();
+  let {
+    entries,
+    heading,
+    selectedId,
+    loading = false,
+    filtered = false,
+    showCategory = true,
+    onSelect,
+    onCreate,
+  }: Props = $props();
 
-  function getCategoryIcon(category: string): string {
-    const icons: Record<string, string> = {
-      'web-app': '🌐',
-      'ssh-server': '🖥️',
-      'bank-financial': '🏦',
-      'email': '📧',
-      'wi-fi': '📶',
-      'generic': '🔑'
-    };
-    return icons[category] || '🔑';
-  }
+  type SortMode = "recent" | "az";
+  let sortMode = $state<SortMode>(readSort());
 
-  function formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    return date.toLocaleDateString();
-  }
-
-  const CATEGORY_ORDER = ['web-app', 'ssh-server', 'bank-financial', 'email', 'wi-fi', 'generic'];
-
-  const byTitle = (a: any, b: any) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
-
-  const sortedEntries = $derived([...entries].sort(byTitle));
-
-  const groupedEntries = $derived.by(() => {
-    if (!groupByCategory) return [];
-
-    const map = new Map<string, any[]>();
-    for (const entry of entries) {
-      const cat = entry.category ?? 'generic';
-      if (!map.has(cat)) map.set(cat, []);
-      map.get(cat)!.push(entry);
+  function readSort(): SortMode {
+    try {
+      return localStorage.getItem("sp_list_sort") === "az" ? "az" : "recent";
+    } catch {
+      return "recent";
     }
+  }
 
-    const knownGroups = CATEGORY_ORDER
-      .filter(cat => map.has(cat))
-      .map(cat => ({
-        category: cat,
-        icon: getCategoryIcon(cat),
-        label: cat.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
-        entries: [...map.get(cat)!].sort(byTitle)
-      }));
+  function setSort(mode: SortMode) {
+    sortMode = mode;
+    try { localStorage.setItem("sp_list_sort", mode); } catch { /* ignore */ }
+  }
 
-    const customGroups = [...map.keys()]
-      .filter(cat => !CATEGORY_ORDER.includes(cat))
-      .sort()
-      .map(cat => ({
-        category: cat,
-        icon: getCategoryIcon(cat),
-        label: cat.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
-        entries: [...map.get(cat)!].sort(byTitle)
-      }));
+  const sorted = $derived(
+    [...entries].sort((a, b) =>
+      sortMode === "az"
+        ? a.title.localeCompare(b.title, undefined, { sensitivity: "base" })
+        : new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    )
+  );
 
-    return [...knownGroups, ...customGroups];
-  });
+  // Arrow-key navigation between rows.
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    if (sorted.length === 0) return;
+    event.preventDefault();
+    const idx = sorted.findIndex((e) => e.id === selectedId);
+    const next = event.key === "ArrowDown"
+      ? Math.min(sorted.length - 1, idx + 1)
+      : Math.max(0, idx === -1 ? 0 : idx - 1);
+    onSelect(sorted[next]);
+    const el = document.getElementById(`entry-row-${sorted[next].id}`);
+    el?.focus();
+    el?.scrollIntoView({ block: "nearest" });
+  }
 </script>
 
-<div class="entry-list">
-  {#if entries.length === 0}
-    <div class="empty-state">
-      <div class="empty-icon">📝</div>
-      <h3>No entries found</h3>
-      <p>Create your first password entry to get started.</p>
+<section class="list-pane" aria-label="Entries">
+  <header class="list-header">
+    <div class="titles">
+      <h1>{heading}</h1>
+      <div class="sub">{entries.length} {entries.length === 1 ? "item" : "items"}</div>
     </div>
-  {:else if groupByCategory}
-    <div class="entry-list-grouped">
-      {#each groupedEntries as group (group.category)}
-        <section class="category-section">
-          <header class="category-header">
-            <span class="category-header-icon">{group.icon}</span>
-            <h2 class="category-header-label">{group.label}</h2>
-            <span class="category-header-count">{group.entries.length}</span>
-          </header>
-          <div class="entries-grid">
-            {#each group.entries as entry (entry.id)}
-              <div
-                class="entry-card"
-                onclick={() => onViewEntry(entry)}
-                onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onViewEntry(entry)}
-                role="button"
-                tabindex="0"
-              >
-                <div class="entry-header">
-                  <div class="entry-icon">
-                    {getCategoryIcon(entry.category)}
-                  </div>
-                  <div class="entry-meta">
-                    <span class="category">{entry.category.replace('-', ' ')}</span>
-                    <span class="date">{formatDate(entry.updated_at)}</span>
-                  </div>
-                </div>
+    <button class="btn btn-primary" onclick={onCreate} title="New entry (Ctrl+N)">
+      <Icon name="plus" size={14} strokeWidth={2.4} /> New
+    </button>
+  </header>
 
-                <div class="entry-content">
-                  <h4 class="entry-title">{entry.title}</h4>
-                  {#if entry.tags && entry.tags.length > 0}
-                    <div class="entry-tags">
-                      {#each entry.tags.slice(0, 3) as tag}
-                        <span class="tag">{tag}</span>
-                      {/each}
-                      {#if entry.tags.length > 3}
-                        <span class="tag more">+{entry.tags.length - 3}</span>
-                      {/if}
-                    </div>
-                  {/if}
-                  {#if entry.notes}
-                    <p class="entry-notes">{entry.notes}</p>
-                  {/if}
-                </div>
+  <div class="sort" role="group" aria-label="Sort entries">
+    <button class="chip" class:on={sortMode === "recent"} aria-pressed={sortMode === "recent"} onclick={() => setSort("recent")}>Recently updated</button>
+    <button class="chip" class:on={sortMode === "az"} aria-pressed={sortMode === "az"} onclick={() => setSort("az")}>A–Z</button>
+  </div>
 
-                <div class="entry-footer">
-                  <span class="field-count">
-                    {entry.field_count} fields
-                  </span>
-                  <div class="entry-actions">
-                    <button class="view-btn" onclick={(event) => { event.stopPropagation(); onViewEntry(entry); }}>
-                      👁️ View
-                    </button>
-                    <button class="edit-btn" onclick={(event) => { event.stopPropagation(); onEditEntry(entry); }}>
-                      ✏️ Edit
-                    </button>
-                  </div>
-                </div>
-              </div>
-            {/each}
-          </div>
-        </section>
+  <div class="rows" role="listbox" aria-label={heading} tabindex="-1" onkeydown={handleKeydown}>
+    {#if loading && entries.length === 0}
+      <div class="empty"><span class="spinner"></span></div>
+    {:else if entries.length === 0}
+      <div class="empty">
+        {#if filtered}
+          <Icon name="search" size={22} />
+          <p class="empty-title">No matching entries</p>
+          <p>Try a different search or category.</p>
+        {:else}
+          <Icon name="key" size={22} />
+          <p class="empty-title">Your vault is empty</p>
+          <p>Add your first password to get started.</p>
+          <button class="btn btn-secondary" onclick={onCreate}><Icon name="plus" size={14} /> New entry</button>
+        {/if}
+      </div>
+    {:else}
+      {#each sorted as entry (entry.id)}
+        {@const cat = categoryMeta(entry.category)}
+        <button
+          id="entry-row-{entry.id}"
+          class="row"
+          class:selected={entry.id === selectedId}
+          role="option"
+          aria-selected={entry.id === selectedId}
+          onclick={() => onSelect(entry)}
+        >
+          <span class="tile" style="background: {cat.bg}; color: {cat.fg}">{initialOf(entry.title)}</span>
+          <span class="text">
+            <span class="title">{entry.title}</span>
+            <span class="meta">
+              {#if showCategory}{cat.label} · {/if}{relativeTime(entry.updated_at)}
+            </span>
+          </span>
+        </button>
       {/each}
-    </div>
-  {:else}
-    <div class="entries-grid">
-      {#each sortedEntries as entry (entry.id)}
-         <div
-           class="entry-card"
-           onclick={() => onViewEntry(entry)}
-           onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onViewEntry(entry)}
-           role="button"
-           tabindex="0"
-         >
-           <div class="entry-header">
-             <div class="entry-icon">
-               {getCategoryIcon(entry.category)}
-             </div>
-             <div class="entry-meta">
-               <span class="category">{entry.category.replace('-', ' ')}</span>
-               <span class="date">{formatDate(entry.updated_at)}</span>
-             </div>
-           </div>
-
-           <div class="entry-content">
-             <h4 class="entry-title">{entry.title}</h4>
-             {#if entry.tags && entry.tags.length > 0}
-               <div class="entry-tags">
-                 {#each entry.tags.slice(0, 3) as tag}
-                   <span class="tag">{tag}</span>
-                 {/each}
-                 {#if entry.tags.length > 3}
-                   <span class="tag more">+{entry.tags.length - 3}</span>
-                 {/if}
-               </div>
-             {/if}
-             {#if entry.notes}
-               <p class="entry-notes">{entry.notes}</p>
-             {/if}
-           </div>
-
-           <div class="entry-footer">
-             <span class="field-count">
-               {entry.field_count} fields
-             </span>
-             <div class="entry-actions">
-               <button class="view-btn" onclick={(event) => { event.stopPropagation(); onViewEntry(entry); }}>
-                 👁️ View
-               </button>
-               <button class="edit-btn" onclick={(event) => { event.stopPropagation(); onEditEntry(entry); }}>
-                 ✏️ Edit
-               </button>
-             </div>
-           </div>
-         </div>
-      {/each}
-    </div>
-  {/if}
-</div>
+    {/if}
+  </div>
+</section>
 
 <style>
-  .entry-list {
-    width: 100%;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: #718096;
-  }
-
-  .empty-icon {
-    font-size: 4rem;
-    margin-bottom: 16px;
-    opacity: 0.5;
-  }
-
-  .empty-state h3 {
-    margin: 0 0 8px 0;
-    color: #4a5568;
-  }
-
-  .empty-state p {
-    margin: 0;
-    font-size: 0.875rem;
-  }
-
-  .entry-list-grouped {
+  .list-pane {
+    width: 300px;
+    flex: none;
+    height: 100%;
     display: flex;
     flex-direction: column;
-    gap: 32px;
+    border-right: 1px solid var(--border);
+    background: var(--bg);
+    min-height: 0;
   }
 
-  .category-section {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+  .list-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 18px 16px 10px;
+  }
+  .titles { min-width: 0; }
+  h1 {
+    margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sub { font-size: 12px; color: var(--text-muted); }
+
+  .sort { display: flex; gap: 6px; padding: 0 16px 10px; }
+  .chip {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 0; cursor: pointer;
+    background: var(--chip); color: var(--text-2);
+  }
+  .chip.on { background: var(--text); color: var(--bg); }
+
+  .rows {
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 2px; padding: 0 8px 12px;
+    outline: none;
   }
 
-  .category-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding-bottom: 10px;
-    border-bottom: 2px solid #e2e8f0;
+  .row {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    min-height: 56px; padding: 8px 10px;
+    border: 0; border-radius: 10px; background: transparent;
+    color: var(--text); text-align: left; cursor: pointer;
   }
+  .row:hover { background: var(--surface-hover); }
+  .row.selected { background: var(--accent-soft); }
 
-  .category-header-icon {
-    font-size: 1.25rem;
-    line-height: 1;
+  .tile {
+    width: 36px; height: 36px; flex: none; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
   }
+  .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .title, .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title { font-weight: 600; font-size: 14px; }
+  .meta { font-size: 12px; color: var(--text-muted); }
 
-  .category-header-label {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 700;
-    color: #2d3748;
-    flex: 1;
+  .empty {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 48px 16px; text-align: center; color: var(--text-muted);
   }
+  .empty p { margin: 0; font-size: 13px; }
+  .empty .empty-title { color: var(--text); font-weight: 600; font-size: 14px; margin-top: 6px; }
+  .empty .btn { margin-top: 10px; }
 
-  .category-header-count {
-    background: #edf2f7;
-    color: #4a5568;
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 10px;
-    min-width: 24px;
-    text-align: center;
-  }
-
-  .entries-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 16px;
-  }
-
-  .entry-card {
-    background: white;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 20px;
-    cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  }
-
-  .entry-card:hover {
-    border-color: #667eea;
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
-    transform: translateY(-1px);
-  }
-
-  .entry-header {
-    display: flex;
-    align-items: center;
-    margin-bottom: 12px;
-  }
-
-  .entry-icon {
-    font-size: 1.5rem;
-    margin-right: 12px;
-  }
-
-  .entry-meta {
-    flex: 1;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .category {
-    background: #edf2f7;
-    color: #4a5568;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    text-transform: capitalize;
-  }
-
-  .date {
-    color: #a0aec0;
-    font-size: 0.75rem;
-  }
-
-  .entry-content {
-    margin-bottom: 16px;
-  }
-
-  .entry-title {
-    margin: 0 0 8px 0;
-    color: #1a202c;
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  .entry-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 8px;
-  }
-
-  .tag {
-    background: #e6fffa;
-    color: #234e52;
-    padding: 2px 6px;
-    border-radius: 8px;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
-  .tag.more {
-    background: #fed7d7;
-    color: #9b2c2c;
-  }
-
-  .entry-notes {
-    margin: 0;
-    color: #718096;
-    font-size: 0.875rem;
-    line-height: 1.4;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .entry-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .field-count {
-    color: #a0aec0;
-    font-size: 0.75rem;
-  }
-
-  .entry-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .view-btn, .edit-btn {
-    background: none;
-    border: none;
-    color: #667eea;
-    cursor: pointer;
-    font-size: 0.875rem;
-    padding: 4px 8px;
-    border-radius: 4px;
-    transition: background 0.2s;
-  }
-
-  .view-btn:hover, .edit-btn:hover {
-    background: #edf2f7;
-  }
-
-  @media (max-width: 640px) {
-    .entries-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .entry-card {
-      padding: 16px;
-    }
-
-    .entry-meta {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 4px;
-    }
+  @media (max-width: 1000px) {
+    .list-pane { width: 260px; }
   }
 </style>

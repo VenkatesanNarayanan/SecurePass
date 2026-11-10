@@ -64,22 +64,22 @@
 </script>
 
 <div
-  class="overlay"
+  class="modal-overlay"
   onclick={onCancel}
   onkeydown={(e) => e.key === "Escape" && onCancel()}
   role="presentation"
 >
   <div
-    class="modal"
+    class="modal xwide"
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => e.stopPropagation()}
     role="dialog"
     aria-modal="true"
-    aria-label="Resolve Sync Conflicts"
+    aria-labelledby="conflicts-title"
     tabindex="-1"
   >
     <div class="modal-header">
-      <h2>Resolve Sync Conflicts</h2>
+      <h2 id="conflicts-title">Resolve sync conflicts</h2>
       <p class="subtitle">
         {conflicts.length} {conflicts.length === 1 ? "entry was" : "entries were"} edited on
         multiple devices. Choose which version to keep for each.
@@ -167,16 +167,16 @@
     </div>
 
     {#if error}
-      <div class="error-banner">{error}</div>
+      <div class="msg msg-error error-banner">{error}</div>
     {/if}
 
     <div class="modal-footer">
-      <button class="btn-secondary" onclick={onCancel} disabled={applying}>Cancel</button>
-      <button class="btn-primary" onclick={applyResolutions} disabled={applying}>
+      <button class="btn btn-secondary" onclick={onCancel} disabled={applying}>Cancel</button>
+      <button class="btn btn-primary" onclick={applyResolutions} disabled={applying}>
         {#if applying}
           <span class="spinner"></span> Applying…
         {:else}
-          Apply Resolutions
+          Keep selected versions
         {/if}
       </button>
     </div>
@@ -184,230 +184,47 @@
 </div>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-    padding: 20px;
-  }
-
-  .modal {
-    background: white;
-    border-radius: 12px;
-    width: 100%;
-    max-width: 820px;
-    max-height: 90vh;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
-  }
-
-  .modal-header {
-    padding: 24px 24px 16px;
-    border-bottom: 1px solid #e2e8f0;
-  }
-
-  .modal-header h2 {
-    margin: 0 0 6px;
-    font-size: 1.25rem;
-    color: #1a202c;
-  }
-
-  .subtitle {
-    margin: 0;
-    font-size: 0.875rem;
-    color: #718096;
-  }
+  .modal-header { flex-direction: column; gap: 0; }
 
   .conflicts-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: 16px 24px; display: flex; flex-direction: column; gap: 20px;
   }
 
-  .conflict-item {
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    overflow: hidden;
-  }
+  .conflict-item { display: flex; flex-direction: column; gap: 10px; }
+  .conflict-header { display: flex; align-items: baseline; gap: 10px; }
+  .conflict-number { font-size: 12px; color: var(--text-muted); }
+  .conflict-title { font-size: 15px; }
 
-  .conflict-header {
-    background: #f8fafc;
-    padding: 10px 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    border-bottom: 1px solid #e2e8f0;
-  }
-
-  .conflict-number {
-    font-size: 0.75rem;
-    color: #718096;
-    background: #edf2f7;
-    padding: 2px 8px;
-    border-radius: 10px;
-  }
-
-  .conflict-title {
-    font-size: 0.95rem;
-    color: #2d3748;
-  }
-
-  .versions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
+  .versions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 
   .version-card {
-    padding: 14px;
-    cursor: pointer;
-    border-left: 3px solid transparent;
-    transition: background 0.15s, border-color 0.15s;
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 10px;
+    background: var(--surface); cursor: pointer; transition: border-color 0.15s, background 0.15s;
   }
+  .version-card:hover { background: var(--surface-hover); }
+  .version-card.selected { border: 2px solid var(--accent); padding: 11px 13px; background: var(--accent-soft); }
 
-  .version-card:first-child {
-    border-right: 1px solid #e2e8f0;
-  }
+  .version-header { display: flex; align-items: center; gap: 8px; }
+  .version-header input { margin: 0; width: 16px; height: 16px; }
+  .version-label { font-weight: 600; }
+  .version-date { margin-left: auto; font-size: 12px; color: var(--text-muted); }
 
-  .version-card.selected {
-    background: #ebf4ff;
-    border-left-color: #667eea;
-  }
-
-  .version-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
-  }
-
-  .version-label {
-    font-weight: 600;
-    font-size: 0.875rem;
-    color: #2d3748;
-    flex: 1;
-  }
-
-  .version-date {
-    font-size: 0.75rem;
-    color: #718096;
-  }
-
-  .version-body {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
+  .version-body { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
   .version-category {
-    font-size: 0.75rem;
-    text-transform: capitalize;
-    color: #667eea;
-    font-weight: 500;
+    align-self: flex-start; padding: 2px 8px; border-radius: 4px;
+    background: var(--chip); color: var(--text-2); font-size: 12px; text-transform: capitalize;
   }
+  .version-notes { margin: 0; color: var(--text-2); white-space: pre-wrap; }
+  .version-field { display: flex; justify-content: space-between; gap: 12px; }
+  .field-name { color: var(--text-muted); flex: none; }
+  .field-value { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .field-value.password { font-family: var(--font-mono); }
 
-  .version-notes {
-    margin: 0;
-    font-size: 0.8rem;
-    color: #4a5568;
-    line-height: 1.4;
-    white-space: pre-wrap;
-  }
+  .error-banner { margin: 0 24px 12px; }
 
-  .version-field {
-    display: flex;
-    gap: 8px;
-    font-size: 0.8rem;
-  }
-
-  .field-name {
-    color: #718096;
-    min-width: 80px;
-    font-weight: 500;
-  }
-
-  .field-value {
-    color: #2d3748;
-    word-break: break-all;
-  }
-
-  .field-value.password {
-    letter-spacing: 2px;
-    color: #718096;
-  }
-
-  .error-banner {
-    margin: 0 24px;
-    padding: 10px 14px;
-    background: #fed7d7;
-    color: #c53030;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    border: 1px solid #feb2b2;
-  }
-
-  .modal-footer {
-    padding: 16px 24px;
-    border-top: 1px solid #e2e8f0;
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-  }
-
-  .btn-primary {
-    padding: 10px 18px;
-    background: #667eea;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    transition: background 0.2s;
-  }
-
-  .btn-primary:hover:not(:disabled) { background: #5a67d8; }
-  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .btn-secondary {
-    padding: 10px 18px;
-    background: #edf2f7;
-    color: #4a5568;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-  }
-
-  .btn-secondary:hover:not(:disabled) { background: #e2e8f0; }
-  .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid transparent;
-    border-top-color: currentColor;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  @media (max-width: 600px) {
-    .versions { grid-template-columns: 1fr; }
-    .version-card:first-child { border-right: none; border-bottom: 1px solid #e2e8f0; }
+  @media (max-width: 700px) {
+    .versions { grid-template-columns: minmax(0, 1fr); }
   }
 </style>

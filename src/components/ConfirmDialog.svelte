@@ -16,154 +16,38 @@
     cancelText = "Cancel",
     danger = false,
     onConfirm,
-    onCancel
+    onCancel,
   }: Props = $props();
 </script>
 
-<!-- Modal Overlay -->
-<div
-  class="modal-overlay"
-  onclick={onCancel}
-  onkeydown={(e) => e.key === 'Escape' && onCancel()}
-  role="presentation"
->
+<div class="modal-overlay confirm-overlay" onclick={onCancel} onkeydown={(e) => e.key === "Escape" && onCancel()} role="presentation">
   <div
-    class="modal-content"
+    class="modal"
     onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
-    role="dialog"
+    onkeydown={(e) => { e.stopPropagation(); if (e.key === "Escape") onCancel(); }}
+    role="alertdialog"
     aria-modal="true"
-    aria-label="Confirm Dialog"
+    aria-labelledby="confirm-title"
+    aria-describedby="confirm-message"
     tabindex="-1"
   >
     <div class="modal-header">
-      <h2>{title}</h2>
+      <h2 id="confirm-title">{title}</h2>
     </div>
-
     <div class="modal-body">
-      <p>{message}</p>
+      <p id="confirm-message">{message}</p>
     </div>
-
     <div class="modal-footer">
-      <button class="btn-secondary" onclick={onCancel}>
-        {cancelText}
-      </button>
-      <button class="btn-primary {danger ? 'danger' : ''}" onclick={onConfirm}>
-        {confirmText}
-      </button>
+      <!-- Focus starts on Cancel so Enter never confirms a destructive action by accident. -->
+      <!-- svelte-ignore a11y_autofocus -->
+      <button class="btn btn-secondary" onclick={onCancel} autofocus>{cancelText}</button>
+      <button class="btn {danger ? 'btn-danger' : 'btn-primary'}" onclick={onConfirm}>{confirmText}</button>
     </div>
   </div>
 </div>
 
 <style>
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-    padding: 20px;
-  }
-
-  .modal-content {
-    background: white;
-    border-radius: 12px;
-    width: 100%;
-    max-width: 400px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-  }
-
-  .modal-header {
-    padding: 24px 24px 16px 24px;
-    border-bottom: 1px solid #e2e8f0;
-  }
-
-  .modal-header h2 {
-    margin: 0;
-    color: #1a202c;
-    font-size: 1.25rem;
-  }
-
-  .modal-body {
-    padding: 16px 24px;
-  }
-
-  .modal-body p {
-    margin: 0;
-    color: #4a5568;
-    line-height: 1.5;
-  }
-
-  .modal-footer {
-    padding: 16px 24px 24px 24px;
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-  }
-
-  .btn-primary {
-    background: #667eea;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 6px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #5a67d8;
-  }
-
-  .btn-primary.danger {
-    background: #e53e3e;
-  }
-
-  .btn-primary.danger:hover:not(:disabled) {
-    background: #c53030;
-  }
-
-  .btn-secondary {
-    background: white;
-    color: #4a5568;
-    border: 1px solid #e2e8f0;
-    padding: 10px 20px;
-    border-radius: 6px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: #f7fafc;
-    border-color: #cbd5e0;
-  }
-
-  @media (max-width: 480px) {
-    .modal-content {
-      margin: 10px;
-    }
-
-    .modal-header,
-    .modal-body,
-    .modal-footer {
-      padding-left: 16px;
-      padding-right: 16px;
-    }
-
-    .modal-footer {
-      flex-direction: column;
-    }
-
-    .btn-primary,
-    .btn-secondary {
-      width: 100%;
-    }
-  }
+  .confirm-overlay { z-index: 2000; }
+  .modal-header, .modal-footer { border: 0; }
+  .modal-body { padding-top: 0; padding-bottom: 4px; }
 </style>

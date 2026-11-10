@@ -1,37 +1,49 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { createEventDispatcher } from "svelte";
+  import Sidebar from "./Sidebar.svelte";
   import EntryList from "./EntryList.svelte";
   import EntryForm from "./EntryForm.svelte";
   import EntryView from "./EntryView.svelte";
-  import SearchBar from "./SearchBar.svelte";
   import Settings from "./Settings.svelte";
   import ConflictResolutionModal from "./ConflictResolutionModal.svelte";
+  import Icon from "./Icon.svelte";
+  import { categoryMeta } from "$lib/categories";
 
-  const dispatch = createEventDispatcher();
-
-  // Props
   interface Props {
     vaultStatus: any;
     onLock: () => void;
   }
 
-  let { vaultStatus, onLock }: Props = $props();
+  let { onLock }: Props = $props();
 
-  // State
+  // ── Entries ────────────────────────────────────────────────────────────────
+  // allEntries feeds the sidebar counts; entries is what the list shows
+  // (the whole vault, or search / category results from the backend).
+  let allEntries = $state<any[]>([]);
   let entries = $state<any[]>([]);
-  let categories = $state<any[]>([]);
-  let tags = $state<any[]>([]);
   let searchQuery = $state("");
   let selectedCategory = $state("");
-  let showEntryForm = $state(false);
-  let showEntryView = $state(false);
-  let showSettings = $state(false);
-  let editingEntry = $state<any>(null);
-  let viewingEntry = $state<any>(null);
   let loading = $state(false);
+  let searchInput = $state<HTMLInputElement | null>(null);
 
-  // Sync state
+  // ── Detail pane ────────────────────────────────────────────────────────────
+  type PaneMode = "empty" | "view" | "edit" | "new";
+  let paneMode = $state<PaneMode>("empty");
+  let selectedId = $state<string | null>(null);
+  let selectedEntry = $state<any>(null);
+  let paneError = $state("");
+
+  // ── Modals / banners ───────────────────────────────────────────────────────
+  let showSettings = $state(false);
+  let updateInfo = $state<{ latestVersion: string; currentVersion?: string; downloadUrl: string } | null>(null);
+  let notice = $state<{ kind: "success" | "error"; text: string } | null>(null);
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Clipboard toast with a countdown until the clipboard is cleared.
+  let toast = $state<{ label: string; total: number; left: number } | null>(null);
+  let toastTimer: ReturnType<typeof setInterval> | null = null;
+
+  // ── Sync ───────────────────────────────────────────────────────────────────
   let syncStatus = $state<{ connected: boolean; lastSync: string | null; hasPendingConflicts: boolean } | null>(null);
   let syncing = $state(false);
   let syncError = $state("");
@@ -40,154 +52,171 @@
   let needsSync = $state(false);
   let syncCheckReason = $state<{ localChanged: boolean; remoteChanged: boolean }>({ localChanged: false, remoteChanged: false });
 
-  // Re-auth state (password changed on another device)
+  // Re-auth (master password changed on another device)
   let showReauthModal = $state(false);
   let reauthPassword = $state("");
   let reauthError = $state("");
   let reauthLoading = $state(false);
 
-  // Update notification
-  let updateInfo = $state<{ latestVersion: string; downloadUrl: string } | null>(null);
-
-  // Import vault modal state
+  // Import .spvault
   let showImportModal = $state(false);
   let importFilePath = $state("");
   let importPassword = $state("");
   let importError = $state("");
   let importLoading = $state(false);
 
-  // Load data on mount
-  async function loadData() {
+  const categoryCounts = $derived.by(() => {
+    const counts: Record<string, number> = {};
+    for (const e of allEntries) {
+      const c = e.category || "generic";
+      counts[c] = (counts[c] ?? 0) + 1;
+    }
+    return counts;
+  });
+
+  const heading = $derived.by(() => {
+    if (searchQuery) return `Results for “${searchQuery}”`;
+    if (selectedCategory) return categoryMeta(selectedCategory).label;
+    return "All items";
+  });
+
+  const syncTitle = $derived(
+    syncStatus?.lastSync
+      ? `Last synced: ${new Date(syncStatus.lastSync).toLocaleString()}` +
+          (syncCheckReason.remoteChanged ? " · Google Drive has changes" : "") +
+          (syncCheckReason.localChanged ? " · This device has changes" : "")
+      : "Never synced"
+  );
+
+  // ── Notices ────────────────────────────────────────────────────────────────
+  function showNotice(kind: "success" | "error", text: string) {
+    notice = { kind, text };
+    if (noticeTimer) clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => (notice = null), kind === "error" ? 8000 : 5000);
+  }
+
+  function handleCopied(label: string, seconds: number) {
+    if (toastTimer) clearInterval(toastTimer);
+    toast = { label, total: seconds, left: seconds };
+    toastTimer = setInterval(() => {
+      if (!toast) return;
+      const left = toast.left - 1;
+      if (left <= 0) {
+        toast = null;
+        if (toastTimer) clearInterval(toastTimer);
+        toastTimer = null;
+      } else {
+        toast = { ...toast, left };
+      }
+    }, 1000);
+  }
+
+  // ── Data loading ───────────────────────────────────────────────────────────
+  async function loadAll() {
+    try {
+      allEntries = await invoke<any[]>("get_entries");
+    } catch (error) {
+      console.error("Failed to load entries:", error);
+    }
+  }
+
+  async function refreshList() {
     loading = true;
     try {
-      [entries, categories, tags] = await Promise.all([
-        invoke<any[]>("get_entries"),
-        invoke<any[]>("get_categories"),
-        invoke<any[]>("get_tags")
-      ]);
+      if (searchQuery || selectedCategory) {
+        entries = await invoke<any[]>("search_entries", {
+          request: { query: searchQuery, categoryFilter: selectedCategory || null },
+        });
+      } else {
+        entries = await invoke<any[]>("get_entries");
+      }
     } catch (error) {
-      console.error("Failed to load data:", error);
+      console.error("Failed to load entries:", error);
     } finally {
       loading = false;
     }
   }
 
-  // Handle search
-  async function handleSearch() {
-    loading = true;
+  async function reloadData() {
+    await Promise.all([loadAll(), refreshList()]);
+  }
+
+  // Re-query whenever the search text or category filter changes.
+  $effect(() => {
+    void searchQuery;
+    void selectedCategory;
+    refreshList();
+  });
+
+  // ── Selection / pane ───────────────────────────────────────────────────────
+  async function selectEntry(entry: { id: string }) {
+    if ((paneMode === "edit" || paneMode === "new") && !confirmDiscard()) return;
+    selectedId = entry.id;
+    paneError = "";
     try {
-      entries = await invoke<any[]>("search_entries", {
-        request: {
-          query: searchQuery,
-          categoryFilter: selectedCategory || null
-        }
-      });
+      selectedEntry = await invoke<any>("get_entry", { request: { entryId: entry.id } });
+      paneMode = "view";
     } catch (error) {
-      console.error("Search failed:", error);
-    } finally {
-      loading = false;
+      console.error("Failed to load entry:", error);
+      paneError = "Couldn't open that entry: " + (error instanceof Error ? error.message : String(error));
+      selectedEntry = null;
+      paneMode = "empty";
     }
   }
 
-  // Handle entry creation
+  function confirmDiscard(): boolean {
+    return confirm("Discard your unsaved changes?");
+  }
+
   function handleCreateEntry() {
-    editingEntry = null;
-    showEntryForm = true;
+    if ((paneMode === "edit" || paneMode === "new") && !confirmDiscard()) return;
+    selectedEntry = null;
+    paneMode = "new";
   }
 
-  // Handle entry viewing
-  async function handleViewEntry(entry: any) {
-    try {
-      const fullEntry = await invoke<any>("get_entry", { request: { entryId: entry.id } });
-      viewingEntry = fullEntry;
-      showEntryView = true;
-    } catch (error) {
-      console.error("Failed to load entry:", error);
-    }
+  function handleEditEntry() {
+    if (selectedEntry) paneMode = "edit";
   }
 
-  // Handle entry editing
-  async function handleEditEntry(entry: any) {
-    try {
-      const fullEntry = await invoke<any>("get_entry", { request: { entryId: entry.id } });
-      editingEntry = fullEntry;
-      showEntryForm = true;
-    } catch (error) {
-      console.error("Failed to load entry:", error);
-    }
+  function handleFormCancel() {
+    paneMode = selectedEntry ? "view" : "empty";
   }
 
-  // Handle entry view close
-  function handleEntryViewClose() {
-    showEntryView = false;
-    viewingEntry = null;
+  async function handleSaved(entryId: string) {
+    await reloadData();
+    paneMode = "empty";
+    await selectEntry({ id: entryId });
+    autoSync();
   }
 
-  // Handle entry deletion
-  function handleEntryDelete() {
-    showEntryView = false;
-    viewingEntry = null;
-    loadData().then(() => autoSync());
+  async function handleDeleted() {
+    selectedEntry = null;
+    selectedId = null;
+    paneMode = "empty";
+    await reloadData();
+    autoSync();
   }
 
-  // Handle entry form close
-  function handleEntryFormClose() {
-    showEntryForm = false;
-    editingEntry = null;
-    loadData().then(() => autoSync());
-  }
-
-  // Handle lock vault
-  function handleLock() {
-    onLock();
-  }
-
-  // Handle export vault
+  // ── Import / export ────────────────────────────────────────────────────────
   async function handleExport() {
     try {
-      // Use Tauri's dialog API to select save location
       const { save } = await import("@tauri-apps/plugin-dialog");
       const filePath = await save({
         title: "Export SecurePass Vault",
-        filters: [{
-          name: "SecurePass Vault",
-          extensions: ["spvault"]
-        }],
-        defaultPath: `securepass-backup-${new Date().toISOString().split('T')[0]}.spvault`
+        filters: [{ name: "SecurePass Vault", extensions: ["spvault"] }],
+        defaultPath: `securepass-backup-${new Date().toISOString().split("T")[0]}.spvault`,
       });
-
       if (filePath) {
         await invoke("export_vault", { request: { filePath } });
-        alert("Vault exported successfully!");
+        showNotice("success", "Vault exported. Keep the backup somewhere safe — it opens with your master password.");
       }
     } catch (error) {
       console.error("Failed to export vault:", error);
-      alert("Failed to export vault: " + error);
+      showNotice("error", "Export failed: " + error);
     }
   }
 
-  // Handle import from PasswordLocker JSON export
-  async function handleImportFromPasswordLocker() {
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const filePath = await open({
-        title: "Import from PasswordLocker",
-        filters: [{ name: "PasswordLocker Export", extensions: ["json"] }],
-        multiple: false
-      });
-
-      if (filePath) {
-        const count = await invoke("import_from_password_locker", { request: { filePath } });
-        await loadData();
-        alert(`Imported ${count} entries from PasswordLocker!`);
-      }
-    } catch (error) {
-      console.error("Failed to import from PasswordLocker:", error);
-      alert("Import failed: " + error);
-    }
-  }
-
-  // Handle import vault — supports .spvault (SecurePass) and .json (PasswordLocker export)
+  // Supports .spvault (SecurePass) and .json (PasswordLocker export).
   async function handleImport() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -195,20 +224,18 @@
         title: "Import Vault",
         filters: [
           { name: "SecurePass Vault", extensions: ["spvault"] },
-          { name: "PasswordLocker Export", extensions: ["json"] }
+          { name: "PasswordLocker Export", extensions: ["json"] },
         ],
-        multiple: false
+        multiple: false,
       });
-
       if (!filePath) return;
 
       if ((filePath as string).endsWith(".json")) {
-        // PasswordLocker JSON export — no password needed
         const count = await invoke("import_from_password_locker", { request: { filePath } });
-        await loadData();
-        alert(`Imported ${count} entries from PasswordLocker!`);
+        await reloadData();
+        showNotice("success", `Imported ${count} entries from PasswordLocker.`);
+        autoSync();
       } else {
-        // SecurePass .spvault — show password modal instead of prompt()
         importFilePath = filePath as string;
         importPassword = "";
         importError = "";
@@ -216,8 +243,14 @@
       }
     } catch (error) {
       console.error("Failed to import vault:", error);
-      alert("Failed to import vault: " + error);
+      showNotice("error", "Import failed: " + error);
     }
+  }
+
+  function closeImportModal() {
+    showImportModal = false;
+    importPassword = "";
+    importError = "";
   }
 
   async function handleImportConfirm() {
@@ -229,11 +262,14 @@
       showImportModal = false;
       importPassword = "";
       importFilePath = "";
-      await loadData();
-      const msg = result.entriesAdded > 0
-        ? `Import complete. ${result.entriesAdded} new ${result.entriesAdded === 1 ? 'entry' : 'entries'} added to your vault.`
-        : "Import complete. No new entries found — your vault already has everything from that file.";
-      alert(msg);
+      await reloadData();
+      showNotice(
+        "success",
+        result.entriesAdded > 0
+          ? `Import complete. ${result.entriesAdded} new ${result.entriesAdded === 1 ? "entry" : "entries"} added.`
+          : "Import complete. Nothing new — your vault already has everything from that file."
+      );
+      autoSync();
     } catch (e) {
       importError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -241,12 +277,12 @@
     }
   }
 
-  // Sync helpers
+  // ── Sync ───────────────────────────────────────────────────────────────────
   async function loadSyncStatus() {
     try {
       syncStatus = await invoke("get_sync_status");
       if (syncStatus?.hasPendingConflicts) {
-        syncError = "Unresolved sync conflicts — click Resolve to fix them.";
+        syncError = "";
       }
     } catch { /* non-fatal */ }
   }
@@ -260,21 +296,26 @@
     } catch { /* silent — network may be unavailable */ }
   }
 
+  async function handleSyncResult(result: any, reload: boolean) {
+    if (result.status === "password_changed") {
+      showReauthModal = true;
+    } else if (result.status === "conflicts") {
+      pendingConflicts = result.conflicts;
+      showConflictModal = true;
+      await loadSyncStatus();
+    } else {
+      needsSync = false;
+      if (reload) await reloadData();
+      await loadSyncStatus();
+    }
+  }
+
   async function handleSync() {
     syncing = true;
     syncError = "";
     try {
       const result: any = await invoke("sync_vault");
-      if (result.status === "password_changed") {
-        showReauthModal = true;
-      } else if (result.status === "conflicts") {
-        pendingConflicts = result.conflicts;
-        showConflictModal = true;
-      } else {
-        needsSync = false;
-        await loadData();
-        await loadSyncStatus();
-      }
+      await handleSyncResult(result, true);
     } catch (e) {
       syncError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -282,27 +323,25 @@
     }
   }
 
-  // Fire-and-forget background sync after local writes (add/update/delete).
-  // Only runs when Drive is connected; errors are silent (user can always sync manually).
+  // Background sync after local writes. Only when Drive is connected; errors
+  // are silent because the manual "Sync now" button is always available.
   async function autoSync() {
     if (!syncStatus?.connected || syncing) return;
     syncing = true;
     try {
       const result: any = await invoke("sync_vault");
-      if (result.status === "password_changed") {
-        showReauthModal = true;
-      } else if (result.status === "conflicts") {
-        pendingConflicts = result.conflicts;
-        showConflictModal = true;
-      } else {
-        needsSync = false;
-        await loadSyncStatus();
-      }
+      await handleSyncResult(result, false);
     } catch {
-      // silent — manual sync button is still available
+      /* silent */
     } finally {
       syncing = false;
     }
+  }
+
+  function closeReauthModal() {
+    showReauthModal = false;
+    reauthPassword = "";
+    reauthError = "";
   }
 
   async function handleReauthAndSync() {
@@ -313,14 +352,7 @@
       const result: any = await invoke("reauth_and_sync", { newMasterPassword: reauthPassword });
       showReauthModal = false;
       reauthPassword = "";
-      if (result.status === "conflicts") {
-        pendingConflicts = result.conflicts;
-        showConflictModal = true;
-      } else {
-        needsSync = false;
-        await loadData();
-        await loadSyncStatus();
-      }
+      await handleSyncResult(result, true);
     } catch (e) {
       reauthError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -333,30 +365,25 @@
     pendingConflicts = [];
     syncError = "";
     needsSync = false;
-    await loadData();
+    await reloadData();
     await loadSyncStatus();
+    // Show the kept version of the entry that is open, if any.
+    if (paneMode === "view" && selectedId) await selectEntry({ id: selectedId });
   }
 
-  function formatLastSync(iso: string | null) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    const diffMs = Date.now() - d.getTime();
-    const mins = Math.floor(diffMs / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return d.toLocaleDateString();
+  function handleSettingsClose() {
+    showSettings = false;
+    // Drive may have been connected/disconnected or the vault re-keyed.
+    loadSyncStatus().then(() => checkSyncNeeded());
   }
 
-  // Initialize
-  loadData();
+  // ── Startup ────────────────────────────────────────────────────────────────
+  loadAll();
   loadSyncStatus().then(() => checkSyncNeeded());
 
-  // Check for updates silently on startup
   invoke("check_for_update")
     .then((result: any) => { if (result.hasUpdate) updateInfo = result; })
-    .catch(() => { /* no network — ignore */ });
+    .catch(() => { /* offline — ignore */ });
 
   // Poll Drive for remote changes every 2 minutes when connected.
   $effect(() => {
@@ -365,701 +392,307 @@
     return () => clearInterval(id);
   });
 
-  // Keyboard shortcuts
+  $effect(() => () => {
+    if (toastTimer) clearInterval(toastTimer);
+    if (noticeTimer) clearTimeout(noticeTimer);
+  });
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  function anyModalOpen() {
+    return showSettings || showConflictModal || showImportModal || showReauthModal;
+  }
+
   function handleKeydown(event: KeyboardEvent) {
-    // Don't trigger shortcuts when typing in inputs
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+    const mod = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
+
+    // Search focus works everywhere, even from inside an input.
+    if (mod && (key === "k" || key === "f") && !anyModalOpen()) {
+      event.preventDefault();
+      searchInput?.focus();
+      searchInput?.select();
       return;
     }
 
-    if (event.ctrlKey || event.metaKey) {
-      switch (event.key.toLowerCase()) {
-        case 'n':
-          event.preventDefault();
-          handleCreateEntry();
-          break;
-        case 'f':
-          event.preventDefault();
-          // Focus search input (will be implemented when SearchBar exposes focus method)
-          break;
-        case 'l':
-          event.preventDefault();
-          handleLock();
-          break;
-      }
-    } else if (event.key === 'Escape') {
-      // Close any open modals
-      if (showEntryView) {
-        handleEntryViewClose();
-      } else if (showEntryForm) {
-        handleEntryFormClose();
-      } else if (showSettings) {
-        showSettings = false;
-      }
+    const inField =
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement ||
+      event.target instanceof HTMLSelectElement;
+
+    if (event.key === "Escape" && event.target === searchInput && searchQuery) {
+      searchQuery = "";
+      return;
+    }
+    if (inField) return;
+
+    if (mod && key === "n") {
+      event.preventDefault();
+      handleCreateEntry();
+    } else if (mod && key === "l") {
+      event.preventDefault();
+      onLock();
+    } else if (event.key === "Escape" && !anyModalOpen()) {
+      if (paneMode === "edit" || paneMode === "new") handleFormCancel();
     }
   }
 
-  // Reactive search
   $effect(() => {
-    if (searchQuery || selectedCategory) {
-      handleSearch();
-    } else {
-      loadData();
-    }
-  });
-
-  // Add keyboard event listener
-  $effect(() => {
-    document.addEventListener('keydown', handleKeydown);
-    return () => document.removeEventListener('keydown', handleKeydown);
+    document.addEventListener("keydown", handleKeydown);
+    return () => document.removeEventListener("keydown", handleKeydown);
   });
 </script>
 
-<div class="dashboard">
-  <!-- Header -->
-  <header class="dashboard-header">
-    <div class="header-left">
-      <img src="/app-icon.png" alt="SecurePass" class="header-app-icon" />
-      <h1>SecurePass</h1>
-      <span class="vault-status">
-        {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
-      </span>
-    </div>
-    <div class="header-right">
-      <button class="btn-outline" onclick={() => showSettings = true} title="Settings">
-        ⚙️ Settings
-      </button>
-      {#if syncStatus?.connected}
-        <button
-          class="btn-sync"
-          class:needs-sync={needsSync && !syncing}
-          onclick={handleSync}
-          disabled={syncing}
-          title={syncStatus.lastSync
-            ? `Last synced: ${new Date(syncStatus.lastSync).toLocaleString()}${syncCheckReason.remoteChanged ? ' · Remote has changes' : ''}${syncCheckReason.localChanged ? ' · Local has changes' : ''}`
-            : 'Never synced'}
-        >
-          {#if syncing}
-            <span class="sync-spin">⟳</span> Syncing…
-          {:else if needsSync}
-            ↑↓ Sync needed
-            <span class="needs-sync-dot"></span>
-          {:else if syncStatus.lastSync}
-            ☁️ {formatLastSync(syncStatus.lastSync)}
-          {:else}
-            ☁️ Sync
-          {/if}
+<div class="app">
+  <Sidebar
+    bind:query={searchQuery}
+    bind:selectedCategory
+    bind:searchInput
+    {categoryCounts}
+    totalCount={allEntries.length}
+    {syncStatus}
+    {syncing}
+    {needsSync}
+    {syncTitle}
+    {syncError}
+    onSync={handleSync}
+    onResolveConflicts={() => (pendingConflicts.length > 0 ? (showConflictModal = true) : handleSync())}
+    onOpenSettings={() => (showSettings = true)}
+    onImport={handleImport}
+    onExport={handleExport}
+    onLock={onLock}
+  />
+
+  <div class="main">
+    {#if updateInfo}
+      <div class="banner" role="status">
+        <Icon name="sparkle" size={16} />
+        <span class="banner-text">
+          SecurePass <strong>v{updateInfo.latestVersion}</strong> is available — you're on v{updateInfo.currentVersion ?? "…"}.
+        </span>
+        <a href={updateInfo.downloadUrl} target="_blank" rel="noopener" class="btn btn-primary banner-btn">Download</a>
+        <button class="icon-btn" onclick={() => (updateInfo = null)} aria-label="Dismiss update notice">
+          <Icon name="close" size={15} />
         </button>
-        {#if syncStatus?.hasPendingConflicts}
-          <button class="btn-outline resolve-btn" onclick={() => showConflictModal = true}>
-            ⚠️ Resolve
-          </button>
+      </div>
+    {/if}
+
+    <div class="panes">
+      <EntryList
+        {entries}
+        {heading}
+        {selectedId}
+        {loading}
+        filtered={!!(searchQuery || selectedCategory)}
+        showCategory={!selectedCategory}
+        onSelect={selectEntry}
+        onCreate={handleCreateEntry}
+      />
+
+      <section class="detail" aria-label="Entry details">
+        {#if paneMode === "new"}
+          <EntryForm onSaved={handleSaved} onCancel={handleFormCancel} />
+        {:else if paneMode === "edit" && selectedEntry}
+          {#key selectedEntry.id}
+            <EntryForm entry={selectedEntry} onSaved={handleSaved} onCancel={handleFormCancel} />
+          {/key}
+        {:else if paneMode === "view" && selectedEntry}
+          <EntryView entry={selectedEntry} onEdit={handleEditEntry} onDeleted={handleDeleted} onCopied={handleCopied} />
+        {:else}
+          <div class="empty">
+            <span class="empty-mark"><Icon name="shield" size={26} strokeWidth={1.8} /></span>
+            {#if paneError}
+              <p class="msg msg-error">{paneError}</p>
+            {:else if allEntries.length === 0}
+              <h2>Add your first password</h2>
+              <p>Everything you save is encrypted on this device before it's written to disk.</p>
+              <button class="btn btn-primary" onclick={handleCreateEntry}><Icon name="plus" size={14} /> New entry</button>
+            {:else}
+              <h2>Select an entry</h2>
+              <p>Pick an item from the list to see its details, or create a new one.</p>
+              <div class="hints">
+                <span><span class="kbd">Ctrl K</span> search</span>
+                <span><span class="kbd">Ctrl N</span> new entry</span>
+                <span><span class="kbd">Ctrl L</span> lock</span>
+              </div>
+            {/if}
+          </div>
         {/if}
-      {:else}
-        <button class="btn-sync btn-sync-disconnected" onclick={() => showSettings = true} title="Set up Google Drive sync in Settings">
-          ☁️ Connect Drive
-        </button>
-      {/if}
-      <button class="btn-outline" onclick={handleExport} title="Export Vault">
-        📤 Export
-      </button>
-      <button class="btn-outline" onclick={handleImport} title="Import Vault">
-        📥 Import
-      </button>
-      <button class="btn-secondary" onclick={handleLock}>
-        🔒 Lock Vault
-      </button>
-    </div>
-  </header>
 
-  <!-- Update notification banner -->
-  {#if updateInfo}
-    <div class="update-banner">
-      <span class="update-banner-text">
-        🎉 SecurePass <strong>v{updateInfo.latestVersion}</strong> is available — you're on v{updateInfo.currentVersion ?? '…'}.
-      </span>
-      <a href={updateInfo.downloadUrl} target="_blank" rel="noopener" class="update-banner-btn">Download update</a>
-      <button class="update-banner-dismiss" onclick={() => updateInfo = null} aria-label="Dismiss">✕</button>
-    </div>
-  {/if}
+        {#if notice}
+          <div class="notice msg {notice.kind === 'error' ? 'msg-error' : 'msg-success'}" role="status">
+            <span>{notice.text}</span>
+            <button class="icon-btn" onclick={() => (notice = null)} aria-label="Dismiss"><Icon name="close" size={14} /></button>
+          </div>
+        {/if}
 
-  <!-- Search and Filters -->
-  <div class="dashboard-controls">
-    <SearchBar
-      bind:query={searchQuery}
-      {categories}
-      bind:selectedCategory
-    />
-    <button class="btn-primary" onclick={handleCreateEntry}>
-      ➕ New Entry
-    </button>
+        {#if toast}
+          <div class="toast" role="status">
+            <Icon name="check" size={15} />
+            <span>{toast.label} copied</span>
+            <span class="track" aria-hidden="true"><span style="width: {(toast.left / toast.total) * 100}%"></span></span>
+            <span class="toast-muted">clears in {toast.left}s</span>
+          </div>
+        {/if}
+      </section>
+    </div>
   </div>
+</div>
 
-  <!-- Main Content -->
-  <main class="dashboard-main">
-    {#if loading}
-      <div class="loading">
-        <div class="spinner"></div>
-        <p>Loading...</p>
-      </div>
-    {:else}
-       <EntryList
-         entries={entries}
-         onViewEntry={handleViewEntry}
-         onEditEntry={handleEditEntry}
-         groupByCategory={!searchQuery && !selectedCategory}
-       />
-    {/if}
-  </main>
+{#if showSettings}
+  <Settings onClose={handleSettingsClose} />
+{/if}
 
-   <!-- Entry View Modal -->
-   {#if showEntryView}
-       <EntryView
-         entry={viewingEntry}
-         onClose={handleEntryViewClose}
-         onEdit={() => {
-           showEntryView = false;
-           showEntryForm = true;
-           editingEntry = viewingEntry;
-           viewingEntry = null;
-         }}
-         onDelete={handleEntryDelete}
-       />
-   {/if}
+{#if showConflictModal && pendingConflicts.length > 0}
+  <ConflictResolutionModal
+    conflicts={pendingConflicts}
+    onResolved={handleConflictsResolved}
+    onCancel={() => (showConflictModal = false)}
+  />
+{/if}
 
-    <!-- Entry Form Modal -->
-    {#if showEntryForm}
-        <EntryForm
-          entry={editingEntry}
-          categories={categories}
-          onClose={handleEntryFormClose}
-        />
-    {/if}
-
-    <!-- Settings Modal -->
-    {#if showSettings}
-        <Settings onClose={() => showSettings = false} />
-    {/if}
-
-    <!-- Conflict Resolution Modal -->
-    {#if showConflictModal && pendingConflicts.length > 0}
-        <ConflictResolutionModal
-          conflicts={pendingConflicts}
-          onResolved={handleConflictsResolved}
-          onCancel={() => showConflictModal = false}
-        />
-    {/if}
-
-    <!-- Import vault password modal -->
-    {#if showImportModal}
-      <div
-        class="modal-overlay"
-        role="presentation"
-        onclick={() => { showImportModal = false; importPassword = ""; importError = ""; }}
-        onkeydown={(e) => e.key === 'Escape' && (showImportModal = false)}
-      >
-        <div
-          class="reauth-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Import vault"
-          onclick={(e) => e.stopPropagation()}
-          onkeydown={(e) => e.stopPropagation()}
-          tabindex="-1"
-        >
-          <div class="reauth-icon">📥</div>
-          <h3>Import Vault</h3>
-          <p class="reauth-desc">
-            Enter the master password for the vault file you're importing.
-            New entries from that file will be <strong>merged into your current vault</strong> — your existing passwords will not be removed.
-          </p>
-
-          <div class="reauth-field">
-            <label for="import-pw">Master Password</label>
-            <input
-              id="import-pw"
-              type="password"
-              bind:value={importPassword}
-              placeholder="Master password for the vault file"
-              disabled={importLoading}
-              onkeydown={(e) => e.key === 'Enter' && handleImportConfirm()}
-            />
-          </div>
-
-          {#if importError}
-            <div class="reauth-error">{importError}</div>
-          {/if}
-
-          <div class="reauth-actions">
-            <button
-              class="btn-reauth-cancel"
-              onclick={() => { showImportModal = false; importPassword = ""; importError = ""; }}
-              disabled={importLoading}
-            >
-              Cancel
-            </button>
-            <button
-              class="btn-reauth-confirm"
-              onclick={handleImportConfirm}
-              disabled={importLoading}
-            >
-              {#if importLoading}
-                <span class="sync-spin">⟳</span> Importing…
-              {:else}
-                Import Vault
-              {/if}
-            </button>
-          </div>
+{#if showImportModal}
+  <div class="modal-overlay" role="presentation" onclick={closeImportModal} onkeydown={(e) => e.key === "Escape" && closeImportModal()}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="import-title"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
+      <div class="modal-header">
+        <div>
+          <h2 id="import-title">Import vault backup</h2>
+          <p class="subtitle">Entries from the file are merged into this vault. Nothing here is removed.</p>
         </div>
       </div>
-    {/if}
+      <div class="modal-body">
+        <div class="field">
+          <label class="label" for="import-pw">Master password of the backup</label>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            id="import-pw"
+            class="input"
+            type="password"
+            bind:value={importPassword}
+            disabled={importLoading}
+            autofocus
+            onkeydown={(e) => { if (e.key === "Enter") handleImportConfirm(); if (e.key === "Escape") closeImportModal(); }}
+          />
+        </div>
+        {#if importError}
+          <div class="msg msg-error">{importError}</div>
+        {/if}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick={closeImportModal} disabled={importLoading}>Cancel</button>
+        <button class="btn btn-primary" onclick={handleImportConfirm} disabled={importLoading}>
+          {#if importLoading}<span class="spinner"></span> Importing…{:else}Import{/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
-    <!-- Re-auth Modal: master password changed on another device -->
-    {#if showReauthModal}
-      <div
-        class="modal-overlay"
-        role="presentation"
-        onclick={() => { showReauthModal = false; reauthPassword = ""; reauthError = ""; }}
-        onkeydown={(e) => e.key === 'Escape' && (showReauthModal = false)}
-      >
-        <div
-          class="reauth-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Master password changed"
-          onclick={(e) => e.stopPropagation()}
-          onkeydown={(e) => e.stopPropagation()}
-          tabindex="-1"
-        >
-          <div class="reauth-icon">🔑</div>
-          <h3>Master Password Changed</h3>
-          <p class="reauth-desc">
-            The vault on Google Drive was re-encrypted with a new master password
-            (changed on another device). Enter the new master password to sync
-            and update this device.
+{#if showReauthModal}
+  <div class="modal-overlay" role="presentation" onclick={closeReauthModal} onkeydown={(e) => e.key === "Escape" && closeReauthModal()}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="reauth-title"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
+      <div class="modal-header">
+        <div>
+          <h2 id="reauth-title">Master password changed</h2>
+          <p class="subtitle">
+            The vault on Google Drive was re-encrypted with a new master password on another device.
+            Enter the new password to sync and update this device.
           </p>
-
-          <div class="reauth-field">
-            <label for="reauth-pw">New Master Password</label>
-            <input
-              id="reauth-pw"
-              type="password"
-              bind:value={reauthPassword}
-              placeholder="Enter the new master password"
-              disabled={reauthLoading}
-              onkeydown={(e) => e.key === 'Enter' && handleReauthAndSync()}
-            />
-          </div>
-
-          {#if reauthError}
-            <div class="reauth-error">{reauthError}</div>
-          {/if}
-
-          <div class="reauth-actions">
-            <button
-              class="btn-reauth-cancel"
-              onclick={() => { showReauthModal = false; reauthPassword = ""; reauthError = ""; }}
-              disabled={reauthLoading}
-            >
-              Cancel
-            </button>
-            <button
-              class="btn-reauth-confirm"
-              onclick={handleReauthAndSync}
-              disabled={reauthLoading}
-            >
-              {#if reauthLoading}
-                <span class="sync-spin">⟳</span> Syncing…
-              {:else}
-                Sync & Update Password
-              {/if}
-            </button>
-          </div>
         </div>
       </div>
-    {/if}
- </div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="label" for="reauth-pw">New master password</label>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            id="reauth-pw"
+            class="input"
+            type="password"
+            bind:value={reauthPassword}
+            disabled={reauthLoading}
+            autofocus
+            onkeydown={(e) => { if (e.key === "Enter") handleReauthAndSync(); if (e.key === "Escape") closeReauthModal(); }}
+          />
+        </div>
+        {#if reauthError}
+          <div class="msg msg-error">{reauthError}</div>
+        {/if}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick={closeReauthModal} disabled={reauthLoading}>Cancel</button>
+        <button class="btn btn-primary" onclick={handleReauthAndSync} disabled={reauthLoading}>
+          {#if reauthLoading}<span class="spinner"></span> Syncing…{:else}Sync and update password{/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
-  .dashboard {
-    min-height: 100vh;
-    background: #f8fafc;
-    display: flex;
-    flex-direction: column;
+  .app { display: flex; height: 100vh; overflow: hidden; background: var(--bg); }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  .banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px 8px 16px;
+    background: var(--accent-soft); color: var(--text); border-bottom: 1px solid var(--border);
+    font-size: 13px;
   }
+  .banner :global(svg) { color: var(--accent-text); }
+  .banner-text { flex: 1; }
+  .banner-btn { min-height: 30px; font-size: 12px; text-decoration: none; }
 
-  .dashboard-header {
-    background: white;
-    border-bottom: 1px solid #e2e8f0;
-    padding: 16px 24px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  .panes { flex: 1; min-height: 0; display: flex; }
+
+  .detail { flex: 1; min-width: 0; position: relative; overflow-y: auto; background: var(--bg); }
+
+  .empty {
+    height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    padding: 32px; text-align: center; color: var(--text-muted);
   }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+  .empty-mark {
+    width: 56px; height: 56px; border-radius: 16px; margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--chip); color: var(--text-2);
   }
+  .empty h2 { margin: 0; font-size: 17px; color: var(--text); }
+  .empty p { margin: 0; max-width: 340px; font-size: 13px; }
+  .empty .btn { margin-top: 10px; }
+  .hints { display: flex; gap: 16px; margin-top: 14px; font-size: 12px; flex-wrap: wrap; justify-content: center; }
+  .hints .kbd { margin-right: 4px; }
 
-  .header-app-icon {
-    width: 32px;
-    height: 32px;
+  .notice {
+    position: sticky; bottom: 16px; margin: 0 24px 16px; z-index: 5;
+    display: flex; align-items: center; gap: 8px; box-shadow: var(--shadow-lg);
   }
+  .notice span { flex: 1; }
+  .notice .icon-btn { width: 28px; height: 28px; color: inherit; }
 
-  .header-left h1 {
-    margin: 0;
-    color: #1a202c;
-    font-size: 1.5rem;
+  .toast {
+    position: fixed; right: 24px; bottom: 24px; z-index: 900;
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-radius: 10px;
+    background: var(--toast-bg); color: var(--toast-text);
+    font-size: 13px; font-weight: 500; box-shadow: var(--shadow-lg);
   }
-
-  .vault-status {
-    background: #edf2f7;
-    color: #4a5568;
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  .header-right {
-    display: flex;
-    gap: 12px;
-  }
-
-  .dashboard-controls {
-    background: white;
-    border-bottom: 1px solid #e2e8f0;
-    padding: 16px 24px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .dashboard-main {
-    flex: 1;
-    padding: 24px;
-  }
-
-  .loading {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 60px;
-    color: #718096;
-  }
-
-  .spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid #e2e8f0;
-    border-top: 3px solid #667eea;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin-bottom: 16px;
-  }
-
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
-
-  .btn-primary {
-    background: #667eea;
-    color: white;
-    border: none;
-    padding: 10px 16px;
-    border-radius: 6px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .btn-primary:hover {
-    background: #5a67d8;
-  }
-
-  .btn-secondary {
-    background: white;
-    color: #4a5568;
-    border: 1px solid #e2e8f0;
-    padding: 8px 14px;
-    border-radius: 6px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-secondary:hover {
-    background: #f7fafc;
-    border-color: #cbd5e0;
-  }
-
-  .btn-outline {
-    background: transparent;
-    color: #4a5568;
-    border: 1px solid #e2e8f0;
-    padding: 8px 14px;
-    border-radius: 6px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 14px;
-  }
-
-  .btn-outline:hover {
-    background: #f7fafc;
-    border-color: #cbd5e0;
-  }
-
-  .btn-sync {
-    background: white;
-    color: #4a5568;
-    border: 1px solid #e2e8f0;
-    padding: 8px 14px;
-    border-radius: 6px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    white-space: nowrap;
-  }
-
-  .btn-sync:hover:not(:disabled) {
-    background: #f7fafc;
-    border-color: #cbd5e0;
-  }
-
-  .btn-sync:disabled { opacity: 0.6; cursor: not-allowed; }
-
-  .btn-sync.needs-sync {
-    background: #fffbeb;
-    border-color: #f6ad55;
-    color: #c05621;
-    font-weight: 600;
-  }
-
-  .btn-sync.needs-sync:hover:not(:disabled) { background: #fef3c7; }
-
-  .update-banner {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: #ebf8ff;
-    border-bottom: 1px solid #bee3f8;
-    padding: 10px 24px;
-    font-size: 0.88rem;
-    color: #2b6cb0;
-  }
-
-  .update-banner-text { flex: 1; }
-
-  .update-banner-btn {
-    background: #3182ce;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-size: 0.82rem;
-    font-weight: 600;
-    text-decoration: none;
-    white-space: nowrap;
-  }
-
-  .update-banner-btn:hover { background: #2b6cb0; }
-
-  .update-banner-dismiss {
-    background: none;
-    border: none;
-    color: #90cdf4;
-    cursor: pointer;
-    font-size: 1rem;
-    padding: 2px 4px;
-    line-height: 1;
-  }
-
-  .update-banner-dismiss:hover { color: #2b6cb0; }
-
-  .btn-sync.btn-sync-disconnected {
-    background: #f8fafc;
-    border-color: #cbd5e0;
-    color: #718096;
-  }
-  .btn-sync.btn-sync-disconnected:hover { background: #edf2f7; color: #4a5568; }
-
-  .needs-sync-dot {
-    width: 7px;
-    height: 7px;
-    background: #ed8936;
-    border-radius: 50%;
-    animation: pulse 1.4s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.4; transform: scale(0.8); }
-  }
-
-  .sync-spin {
-    display: inline-block;
-    animation: spin 0.8s linear infinite;
-  }
-
-  .resolve-btn { color: #c53030; border-color: #feb2b2; }
-
-  /* Re-auth modal */
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .reauth-modal {
-    background: white;
-    border-radius: 12px;
-    padding: 32px;
-    width: 100%;
-    max-width: 420px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-    text-align: center;
-  }
-
-  .reauth-icon {
-    font-size: 2.5rem;
-    margin-bottom: 12px;
-  }
-
-  .reauth-modal h3 {
-    margin: 0 0 10px;
-    color: #1a202c;
-    font-size: 1.2rem;
-  }
-
-  .reauth-desc {
-    color: #4a5568;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    margin: 0 0 20px;
-  }
-
-  .reauth-field {
-    text-align: left;
-    margin-bottom: 16px;
-  }
-
-  .reauth-field label {
-    display: block;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #4a5568;
-    margin-bottom: 6px;
-  }
-
-  .reauth-field input {
-    width: 100%;
-    padding: 10px 12px;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 6px;
-    font-size: 14px;
-    box-sizing: border-box;
-    transition: border-color 0.2s;
-  }
-
-  .reauth-field input:focus {
-    outline: none;
-    border-color: #667eea;
-  }
-
-  .reauth-field input:disabled {
-    background: #f0f0f0;
-    cursor: not-allowed;
-  }
-
-  .reauth-error {
-    background: #fed7d7;
-    color: #c53030;
-    border: 1px solid #feb2b2;
-    border-radius: 6px;
-    padding: 10px 12px;
-    font-size: 0.875rem;
-    text-align: left;
-    margin-bottom: 16px;
-  }
-
-  .reauth-actions {
-    display: flex;
-    gap: 10px;
-    margin-top: 4px;
-  }
-
-  .btn-reauth-cancel {
-    flex: 0 0 auto;
-    padding: 10px 16px;
-    background: #edf2f7;
-    color: #4a5568;
-    border: none;
-    border-radius: 6px;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-reauth-cancel:hover:not(:disabled) { background: #e2e8f0; }
-  .btn-reauth-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .btn-reauth-confirm {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 10px 16px;
-    background: #667eea;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-reauth-confirm:hover:not(:disabled) { background: #5a67d8; }
-  .btn-reauth-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
-
-  @media (max-width: 768px) {
-    .dashboard-header,
-    .dashboard-controls {
-      padding: 12px 16px;
-    }
-
-    .dashboard-main {
-      padding: 16px;
-    }
-
-    .dashboard-controls {
-      flex-direction: column;
-      gap: 12px;
-      align-items: stretch;
-    }
-
-    .header-left {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 4px;
-    }
-  }
+  .track { width: 60px; height: 3px; border-radius: 2px; background: var(--toast-track); overflow: hidden; }
+  .track span { display: block; height: 100%; background: var(--toast-text); transition: width 1s linear; }
+  .toast-muted { color: var(--toast-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
 </style>
