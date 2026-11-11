@@ -1,296 +1,187 @@
-# 🔐 SecurePass - Encrypted Password Manager
+# SecurePass
 
 > Your passwords. Your device. Your cloud.
 
-A secure, cross-platform password manager built with Rust and Svelte, featuring military-grade encryption, Google Drive sync, and a modern intuitive interface.
+A cross-platform desktop password manager built with Rust, Svelte and Tauri. Your vault is encrypted on your device and, if you want, synced through your own Google Drive — no account, no subscription, no SecurePass server.
 
-![SecurePass](https://img.shields.io/badge/SecurePass-1.1.12-blue?style=for-the-badge)
-![Rust](https://img.shields.io/badge/Rust-1.91.1-orange?style=flat-square)
-![Svelte](https://img.shields.io/badge/Svelte-5.0-orange?style=flat-square)
-![Tauri](https://img.shields.io/badge/Tauri-2.0-purple?style=flat-square)
+[![Latest release](https://img.shields.io/github/v/release/VenkatesanNarayanan/SecurePass?label=release)](https://github.com/VenkatesanNarayanan/SecurePass/releases/latest)
+[![Test](https://github.com/VenkatesanNarayanan/SecurePass/actions/workflows/test.yml/badge.svg)](https://github.com/VenkatesanNarayanan/SecurePass/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+**Download:** [securepass.wonderstek.com](https://www.securepass.wonderstek.com/#download) — macOS, Windows and Linux.
 
 ---
 
-## ✨ Features
+## Features
 
-### 🔒 Security First
-- **Military-grade encryption** using ChaCha20-Poly1305 AEAD
-- **Argon2id key derivation** (64 MiB memory, 3 iterations) for master password hashing
-- **Secure memory handling** with automatic key zeroization on lock
-- **Zero plaintext storage** — passwords never written unencrypted to disk
-- **Change master password** — re-derives a new key with a fresh salt and re-encrypts the entire vault
+### Security
+- **Authenticated encryption** — the whole vault is encrypted with ChaCha20-Poly1305
+- **Argon2id key derivation** (64 MiB memory, 3 iterations) from your master password
+- **Nothing stored unencrypted** — entries are never written to disk in plain text; the master password is never stored
+- **Key wiped on lock** — locking overwrites the encryption key and drops the decrypted vault (see [Memory](#memory) for the limits)
+- **Auto-lock** after inactivity (1–60 minutes) and **clipboard auto-clear** after copying (5–300 seconds)
+- **Change master password** — derives a new key with a fresh salt and re-encrypts the vault
 
-### ☁️ Google Drive Sync
-- **Personal Drive storage** — vault file lives in your own Google Drive (`drive.file` scope only; SecurePass cannot access other files)
-- **Entry-level 3-way merge** — changes made independently on two devices are merged automatically; only true conflicts are surfaced to you
-- **Tombstone-based deletion** — entries deleted on one device are correctly removed on the other during the next sync
-- **Sync needed indicator** — the sync button pulses amber when local or remote changes are detected
-- **Conflict resolution UI** — side-by-side view of conflicting versions; pick which to keep per entry
-- **Restore from Google Drive** — first-launch on a new device can pull the vault from Drive without needing the original device
+### Google Drive sync
+- **Your own Drive** — the encrypted vault file lives in your Google Drive, using the `drive.file` scope (SecurePass can only see files it created)
+- **Entry-level 3-way merge** — edits made on different devices merge automatically; only real conflicts are shown to you, side by side
+- **Deletions sync** — entries deleted on one device are removed on the others
+- **Restore on a new device** — pull your vault straight from Drive on first launch
+- **Cross-device password change** — after changing the master password on one device, the others ask for the new password on their next sync and re-key themselves
 
-### 🔄 Cross-Device Password Change
-- When the master password is changed on Device A and Device B tries to sync, SecurePass detects the key mismatch and prompts for the new password
-- Device B derives the new key using the **same salt** embedded in the Drive file (ensuring both devices use an identical key), merges any local-only changes, and re-saves locally — no manual file copying needed
+### Everyday use
+- Three-pane layout: categories and sync status, entry list, and entry details side by side
+- **Category templates** (Web & Apps, SSH & Servers, Banking, Email, Wi-Fi, Generic) plus custom text, secret and long-text fields
+- **Search** and sorting by **recently used**, recently updated or A–Z
+- **Password generator** built into every password field, with a strength meter and copy button
+- Per-field copy and reveal; links open in your browser
+- **Light and dark themes** (follows your system, or choose one)
+- **Export / import** encrypted `.spvault` backups, and import from PasswordLocker JSON exports
 
-### 🎯 Core Functionality
-- **Password vault management** with categorized entries
-- **Secure password generation** with customizable length and character sets
-- **Auto-lock timer** with configurable timeout (1–60 minutes)
-- **Clipboard security** with automatic clearing (5–300 seconds)
-- **Export / Import** encrypted vault backups (`.spvault`)
-- **Import from PasswordLocker** — migrate entries from JSON exports
-
-### 🎨 User Experience
-- **Modern, responsive UI** built with Svelte 5 (runes)
-- **Category-based templates** with sensible field defaults per entry type
-- **Real-time search and category filtering**
-- **Custom password fields** displayed masked in entry view (reveal on click)
-- **Keyboard shortcuts** for power users
-- **Cross-platform** — macOS, Windows, Linux
-
-### 📁 Entry Categories
-| Category | Fields |
+### Keyboard shortcuts
+| Shortcut | Action |
 |----------|--------|
-| **Web / App** | URL, Username, Password, Recovery Email |
-| **SSH / Server** | Hostname, Port, Username, Password, Private Key |
-| **Bank / Financial** | Bank Name, Username, Password, Account Number |
-| **Email** | Email, Password, IMAP/SMTP servers |
-| **Wi-Fi** | SSID, Password, Network Type |
-| **Generic** | Fully customisable fields |
+| Ctrl/Cmd + K or F | Focus search |
+| Ctrl/Cmd + N | New entry |
+| Ctrl/Cmd + L | Lock vault |
+| ↑ / ↓ | Move through the entry list |
+| Escape | Cancel editing, clear search, or close a dialog |
 
 ---
 
-## 🚀 Quick Start
+## Getting started (users)
+
+1. Download the installer for your platform from the [website](https://www.securepass.wonderstek.com/#download) (installation notes for each platform are there too — the builds are not code-signed yet).
+2. Launch SecurePass and create a master password. Your encrypted vault is created at `~/.securepass/vault.dat`.
+3. Optional: **Settings → Google Drive sync → Connect** to sync with your other devices. On a new device, choose **Restore from Google Drive** on the first screen.
+
+There is **no master-password recovery**. Keep an exported `.spvault` backup somewhere safe.
+
+---
+
+## Development
 
 ### Prerequisites
-- **Node.js** 18+ ([Download](https://nodejs.org/))
-- **Rust** 1.70+ ([Install](https://rustup.rs/))
+- **Node.js** 18+ (CI uses 22)
+- **Rust** stable, via [rustup](https://rustup.rs/)
+- **Windows:** Visual Studio or Build Tools with the *Desktop development with C++* workload (Rust needs its linker); WebView2 ships with Windows 10/11
+- **macOS:** `xcode-select --install`
+- **Linux:** `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev` and `build-essential` (see `.github/workflows/release.yml` for the full list)
 
-### Installation
-
+### Run it
 ```bash
-git clone <repository-url>
-cd securepass
+git clone https://github.com/VenkatesanNarayanan/SecurePass.git
+cd SecurePass
 npm install
 npm run tauri dev
 ```
 
-### Build for Production
+### Commands
 ```bash
-npm run tauri build
+npm run tauri dev        # full app with hot reload (Vite on port 1420)
+npm run tauri build      # production installers
+npm run check            # svelte-check + TypeScript
+
+# from src-tauri/
+cargo test               # Rust unit tests (includes a known-answer test for key derivation)
+cargo clippy             # Rust lints
+cargo audit              # dependency advisories (cargo install cargo-audit)
 ```
+
+`npm run dev` starts only the frontend; every backend call fails without Tauri.
+
+### Project structure
+```
+src/                         Frontend (SvelteKit SPA, Svelte 5 runes)
+├── app.css                  Theme tokens (light/dark) and shared styles
+├── lib/                     theme, categories, clipboard, strength, recently-used helpers
+├── components/              Dashboard (shell), Sidebar, EntryList, EntryView, EntryForm,
+│                            PasswordGenerator, Settings, VaultUnlock, dialogs, Icon
+└── routes/                  +page.svelte (lock state, auto-lock), +layout.svelte (theme)
+src-tauri/src/
+├── commands.rs              All Tauri commands + AppState; vault file read/write
+├── crypto.rs                Argon2id key derivation, ChaCha20-Poly1305
+├── sync.rs                  Google OAuth, Drive API, 3-way merge, tombstones
+├── vault.rs                 Vault / Entry / Field data model
+└── lib.rs                   Tauri builder, command registration, window placement
+```
+
+### Releasing
+`./scripts/release.sh <version> "<message>"` bumps the version in `package.json`, `tauri.conf.json` and `Cargo.toml`, commits, tags `v<version>` and pushes. The tag triggers the Release workflow, which builds every platform and publishes the installers to the website.
 
 ---
 
-## 📖 Usage Guide
-
-### First Time Setup
-1. Launch SecurePass
-2. Create a strong master password (8+ characters)
-3. Your encrypted vault is created at `~/.securepass/vault.dat`
-
-### Creating Entries
-1. Click **➕ New Entry** or press **Ctrl+N**
-2. Choose a category — fields pre-populate for that type
-3. Use the **🔐** generator button to create a strong password
-4. Save
-
-### Password Generator
-- Length 8–64 characters
-- Toggle uppercase, lowercase, numbers, symbols
-- Exclude visually similar characters (0/O, 1/l/I)
-- Real-time strength indicator
-
-### Google Drive Sync
-
-#### Connect (first time)
-1. Open **⚙️ Settings → Cloud Storage**
-2. Click **Connect Google Drive** — your browser opens for sign-in
-3. After authorising, click **Sync Now** or use the sync button in the header
-
-#### Sync button states
-| State | Meaning |
-|-------|---------|
-| ☁️ _X min ago_ | Synced, no changes detected |
-| ↑↓ Sync needed 🔴 | Local or remote changes detected |
-| ⟳ Syncing… | Sync in progress |
-
-#### Restore on a new device
-1. On the new device, open SecurePass (no vault yet)
-2. Click **☁️ Restore from Google Drive** on the unlock screen
-3. Complete Google sign-in in your browser
-4. Enter your master password — vault is downloaded and saved locally
-
-#### After changing the master password
-When Device A changes the master password and Device B next syncs:
-1. SecurePass detects the key mismatch automatically
-2. A prompt appears: **"Master Password Changed"**
-3. Enter the new master password — Device B re-derives the key using the Drive vault's salt, merges any local changes, and saves with the new key
-
-### Change Master Password
-1. Open **⚙️ Settings → Change Master Password**
-2. Enter current password, new password, and confirmation
-3. Click **Change Password** — the vault is re-encrypted locally and re-uploaded to Drive if connected
-
-### Backup & Restore
-- **Export**: Header → **📤 Export** → saves `.spvault` file
-- **Import**: Header → **📥 Import** → supports `.spvault` and PasswordLocker `.json`
-
-### Keyboard Shortcuts
-| Shortcut | Action |
-|----------|--------|
-| Ctrl/Cmd+N | New entry |
-| Ctrl/Cmd+L | Lock vault |
-| Escape | Close modal |
-
----
-
-## 🛠️ Development
-
-### Project Structure
-```
-securepass/
-├── src/                        # Frontend (Svelte 5)
-│   ├── components/
-│   │   ├── Dashboard.svelte        # Main shell, sync button, re-auth modal
-│   │   ├── EntryList.svelte        # Grid grouped by category
-│   │   ├── EntryForm.svelte        # Create / edit with category templates
-│   │   ├── EntryView.svelte        # Read-only detail, masked password fields
-│   │   ├── PasswordGenerator.svelte
-│   │   ├── SearchBar.svelte
-│   │   ├── Settings.svelte         # Auto-lock, clipboard, change password, Drive
-│   │   ├── ConflictResolutionModal.svelte
-│   │   └── ConfirmDialog.svelte
-│   └── routes/
-│       ├── +page.svelte            # Root: unlock/lock state, auto-lock timer
-│       └── +layout.ts              # ssr = false (SPA mode)
-├── src-tauri/
-│   └── src/
-│       ├── commands.rs             # All Tauri command handlers + AppState
-│       ├── crypto.rs               # CryptoManager (Argon2id + ChaCha20-Poly1305)
-│       ├── sync.rs                 # OAuth, Drive API, 3-way merge, tombstones
-│       ├── vault.rs                # Vault / Entry / Field data structures
-│       ├── lib.rs                  # Tauri builder + command registration
-│       └── main.rs                 # Entry point
-└── package.json
-```
-
-### Available Scripts
-
-```bash
-# Development
-npm run tauri dev          # Full dev server (Rust + frontend hot-reload)
-npm run dev               # Frontend only (invoke() calls will fail)
-
-# Building
-npm run tauri build       # Production build
-cargo build --release     # Rust backend only (run from src-tauri/)
-
-# Code Quality
-cargo clippy              # Rust linting
-cargo fmt                 # Rust formatting
-npm run check             # svelte-check + tsc
-
-# Testing
-cargo test                # Rust unit tests
-cargo audit               # Audit Rust deps for vulnerabilities
-npm audit                 # Audit npm deps
-```
-
----
-
-## 🔐 Security Details
+## Security design
 
 ### Encryption
 | Property | Value |
 |----------|-------|
-| Algorithm | ChaCha20-Poly1305 (AEAD) |
-| Key derivation | Argon2id — 64 MiB memory, 3 iterations, 1 lane |
-| Salt | 32 bytes, random, stored in vault file header |
-| Nonce | 12 bytes, random per save |
-| Key size | 256 bits |
+| Cipher | ChaCha20-Poly1305 (AEAD), 256-bit key |
+| Key derivation | Argon2id v1.3 — 64 MiB memory, 3 iterations, 1 lane |
+| Salt | 32 random bytes per vault, stored in the file header; a new salt on every master-password change |
+| Nonce | 12 random bytes, new on every save |
 | AAD | `b"vault"` |
 
-### Vault File Format
+The Argon2 parameters are fixed in `crypto.rs` and are not stored in the vault file, so they can't change without a vault-format migration; a known-answer test guards them.
+
+### Vault file format
 ```
-[32-byte Argon2 salt][12-byte nonce][ChaCha20-Poly1305 ciphertext]
+[32-byte Argon2 salt][12-byte nonce][ChaCha20-Poly1305 ciphertext of the JSON vault]
 ```
-The entire JSON-serialised vault is encrypted as one unit. The salt is embedded in the file so any device can re-derive the correct key given the master password.
+The whole vault is encrypted as one unit (one nonce per save, not per entry). The same format is used for `~/.securepass/vault.dat`, `.spvault` exports and the Google Drive copy, so any device can derive the key from the master password and the salt in the file.
 
-### Data Storage
-- **Vault**: `~/.securepass/vault.dat`
-- **Drive tokens**: `~/.securepass/cloud_tokens.json`
-- **Sync state**: `~/.securepass/sync_state.json`
-- **Backup format**: `.spvault` (same binary format as `vault.dat`)
+### What is stored where
+| File | Contents | Encrypted |
+|------|----------|-----------|
+| `~/.securepass/vault.dat` | Your vault | Yes |
+| `~/.securepass/cloud_tokens.json` | Google OAuth tokens (only if Drive is connected) | No — readable by your user account; deleted when you disconnect Drive |
+| `~/.securepass/sync_state.json` | Drive file ID and last sync time | No (contains no secrets) |
+| App local storage | Theme, timers, sort order, generator options, recently-used entry IDs and times | No (contains no secrets) |
 
-### Memory Security
-- `CryptoManager::zeroize_key()` zeros the in-memory key bytes on lock
-- Master password and derived key are never written to disk in plaintext
-- Clipboard is cleared automatically after the configured timeout
+### Memory
+While the vault is unlocked, its decrypted contents are held in ordinary process memory. Locking (manually or by auto-lock) overwrites the encryption key and drops the decrypted vault, but the freed memory is not explicitly zeroed, and temporary key copies made during sync are not wiped either. Treat an unlocked SecurePass on a compromised machine as exposed — no password manager can fully protect against malware running as your user.
 
-### Google Drive Security
-- OAuth 2.0 installed-app flow with local redirect listener (5-minute timeout)
-- `drive.file` scope only — SecurePass can only access files it created
-- Tokens stored locally in `~/.securepass/cloud_tokens.json`
-- The vault file on Drive is fully encrypted; Google cannot read its contents
+### Clipboard
+Copied values are cleared from the clipboard after the configured timeout. Operating-system clipboard history (for example Windows **Win+V** history or cloud clipboard) may still keep a copy; turn those off if that matters to you.
+
+### Google Drive
+- OAuth 2.0 installed-app flow in your browser, with a local redirect listener (5-minute timeout)
+- `drive.file` scope only — SecurePass can access only the files it created
+- Google sees only the encrypted vault file
+- The OAuth **client secret in `sync.rs` is intentionally public**: for desktop ("installed") apps Google does not treat it as confidential, because it can't be kept secret in a distributed binary. It identifies the app; it grants no access to anyone's data without that user signing in.
+
+### Network
+The app contacts only Google (when Drive is connected) and `https://www.securepass.wonderstek.com/version.json` for the update check. No telemetry, analytics or crash reporting. See the [privacy policy](https://www.securepass.wonderstek.com/privacy.html).
+
+### Reporting a vulnerability
+Please **don't** open a public issue. See [SECURITY.md](SECURITY.md).
 
 ---
 
-## ⚠️ Security Notices
+## Troubleshooting
 
-- **Never share your master password** — there is no recovery mechanism
-- **Keep backup files secure** — `.spvault` files contain your encrypted data
-- **Use a strong, unique master password** — this is the only key to your vault
-- **Enable auto-lock** on shared or unattended devices
-- **Back up regularly** — export a `.spvault` file or use Google Drive sync
+**`cargo` not found** — install Rust with [rustup](https://rustup.rs/), then open a new terminal.
 
----
+**Windows: `link.exe` not found / linker errors** — add the *Desktop development with C++* workload in Visual Studio Installer (Modify), then open a new terminal.
 
-## 🆘 Troubleshooting
+**Port 1420 already in use** — another `tauri dev` or Vite server is running; stop it.
 
-**`cargo` not found**
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
-```
+**App icon didn't update after changing `src-tauri/icons`** — Cargo doesn't rebuild for icon-only changes; run `cargo clean -p securepass` in `src-tauri/`.
 
-**Port 1420 already in use**
-```bash
-lsof -ti:1420 | xargs kill -9
-```
+**Google sign-in window didn't appear** — check that a default browser is set. The sign-in listener times out after 5 minutes.
 
-**Build fails on macOS**
-```bash
-xcode-select --install
-```
-
-**Google Drive sign-in window did not appear**
-Make sure your default browser is set and not blocking pop-ups. The OAuth listener times out after 5 minutes.
-
-**"Incorrect master password" after syncing from another device**
-The sync button will detect this and show the **Master Password Changed** prompt. Enter the new password to re-key this device automatically.
+**"Master Password Changed" prompt after syncing** — the master password was changed on another device; enter the new one to re-key this device.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes
-4. Push and open a Pull Request
+Issues and pull requests are welcome.
 
-**Guidelines:**
-- Follow Rust and TypeScript best practices
-- Never log field values, master passwords, or derived keys
-- Run `cargo clippy` and `npm run check` before submitting
-- Any change to `crypto.rs` requires a security review
+- Run `npm run check`, `cargo test` and `cargo clippy` before opening a PR.
+- Never log field values, master passwords or keys.
+- Changes to `crypto.rs` or the vault file format affect every existing vault — explain the migration in the PR, and expect a careful review.
 
----
+## License
 
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-**Built with Rust, Svelte, and Tauri**
+[MIT](LICENSE)

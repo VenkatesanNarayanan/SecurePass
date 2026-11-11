@@ -397,9 +397,7 @@ pub async fn search_entries(
 
     // Apply category filter
     if let Some(category) = request.category_filter {
-        results = results.into_iter()
-            .filter(|entry| entry.category == category)
-            .collect();
+        results.retain(|entry| entry.category == category);
     }
 
     // Convert to JSON

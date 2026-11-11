@@ -1,18 +1,19 @@
 # SecurePass Agent Guidelines
 
+> **Note:** the *Implementation Phases* below are the original project plan. Where they differ from the code, the code and `README.md` ("Security design") are authoritative — for example, the vault is encrypted as one unit with a fresh nonce per save, not per entry.
+
 ## Build Commands
 - `npm run tauri build` - Build production app for all platforms
 - `npm run tauri dev` - Start development server
 - `cargo build --release` - Build Rust backend only
 
 ## Test Commands
-- `cargo test` - Run all Rust tests
-- `npm test` - Run frontend tests
-- `cargo test --test integration` - Run integration tests
+- `cargo test` - Run all Rust tests (from `src-tauri/`; unit tests live in `crypto.rs` and `vault.rs`)
 - `cargo test specific_test_name` - Run single Rust test
+- There is no frontend test runner and no integration-test suite yet
 
 ## Lint Commands
-- `npm run lint` - Lint and format frontend code
+- `npm run lint` / `npm run check` - Type-check the frontend (svelte-check)
 - `cargo clippy` - Lint Rust code
 - `cargo fmt` - Format Rust code
 
@@ -58,8 +59,7 @@ npm run tauri build
 cargo build
 
 # Run tests
-cargo test
-npm test
+cargo test        # from src-tauri/
 ```
 
 ### Code Quality
@@ -100,8 +100,8 @@ npm audit
 1. **Cryptographic Core (Rust)**
    - Implement `crypto.rs`: ChaCha20-Poly1305 encryption/decryption
    - Implement `key_derivation.rs`: Argon2id key derivation from master password
-   - Create `vault.rs`: Vault operations with unique nonces per entry
-   - Add AAD (Entry ID, Timestamp, Category) to encryption
+   - Create `vault.rs`: Vault operations (implemented: whole-vault encryption, fresh nonce per save)
+   - AAD: implemented as the constant `b"vault"` (per-entry AAD was planned, not built)
 
 2. **Data Models**
    - `Entry` struct: id, category, fields, tags, timestamps
@@ -109,7 +109,7 @@ npm audit
    - `Vault` struct: entries, metadata, version
 
 3. **File I/O Operations**
-   - Encrypted JSON/SQLite storage
+   - Encrypted JSON storage (implemented; SQLite was not used)
    - Secure temp file handling
    - File integrity validation
 
@@ -138,7 +138,7 @@ npm audit
 1. **Security Features**
    - Auto-lock timer implementation
    - Secure clipboard with auto-clear (configurable seconds)
-   - Memory zeroing for secrets in Rust
+   - Memory zeroing for secrets in Rust (partial: the key is overwritten on lock; decrypted entries are not zeroed)
 
 2. **Cloud Sync (Future)**
    - Encrypted vault file upload/download
