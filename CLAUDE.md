@@ -25,7 +25,7 @@ There is no frontend test runner and no Rust integration-test directory. CI (`.g
 
 ## Releasing
 
-`./scripts/release.sh <version> "<message>"` bumps the version in **three** places (`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`), commits, tags `v<version>` and pushes. Keep all three in sync if you bump by hand: `check_for_update` compares `CARGO_PKG_VERSION` against `version.json` on the website. The tag triggers `release.yml`, which builds on macOS, Windows and Linux, then pushes the binaries plus `release-data.js` / `version.json` into the separate `securepass-web` repo and keeps only the two newest releases there.
+`./scripts/release.sh <version> "<message>"` bumps the version in **four** places (`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the `securepass` entry in `src-tauri/Cargo.lock`), commits, tags `v<version>` and pushes. Keep all four in sync if you bump by hand (CI builds with `--locked`): `check_for_update` compares `CARGO_PKG_VERSION` against `version.json` on the website. The tag triggers `release.yml`, which builds on macOS, Windows and Linux, then pushes the binaries plus `release-data.js` / `version.json` into the separate `securepass-web` repo and keeps only the two newest releases there.
 
 ## Architecture
 

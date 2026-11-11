@@ -107,7 +107,7 @@ src-tauri/src/
 ```
 
 ### Releasing
-`./scripts/release.sh <version> "<message>"` bumps the version in `package.json`, `tauri.conf.json` and `Cargo.toml`, commits, tags `v<version>` and pushes. The tag triggers the Release workflow, which builds every platform and publishes the installers to the website.
+`./scripts/release.sh <version> "<message>"` bumps the version in `package.json`, `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`, commits, tags `v<version>` and pushes. The tag triggers the Release workflow, which builds every platform and publishes the installers to the website.
 
 ---
 
