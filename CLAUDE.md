@@ -21,7 +21,7 @@ cargo clippy
 cargo fmt
 ```
 
-There is no frontend test runner and no Rust integration-test directory. CI (`.github/workflows/test.yml`) only runs `npm run check` and `npm run build` on pushes and PRs to `main`.
+There is no frontend test runner and no Rust integration-test directory. CI (`.github/workflows/test.yml`) runs on pushes and PRs to `main`: `npm run check` + `npm run build`, `cargo test --locked` + `cargo clippy --all-targets -- -D warnings`, and `cargo audit` + `npm audit --omit=dev --audit-level=high`. Keep clippy warning-free.
 
 ## Releasing
 
