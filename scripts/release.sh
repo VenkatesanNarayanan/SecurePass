@@ -49,8 +49,22 @@ node -e "
   console.log('  Cargo.toml → ${VERSION}');
 "
 
+# ── Bump Cargo.lock (CI builds with --locked, which fails on a stale lock) ──
+node -e "
+  const fs = require('fs');
+  const file = 'src-tauri/Cargo.lock';
+  const lock = fs.readFileSync(file, 'utf8');
+  const re = /(\[\[package\]\]\r?\nname = \"securepass\"\r?\nversion = \")[^\"]*(\")/;
+  if (!re.test(lock)) {
+    console.error('Error: securepass package entry not found in ' + file);
+    process.exit(1);
+  }
+  fs.writeFileSync(file, lock.replace(re, '\$1${VERSION}\$2'));
+  console.log('  Cargo.lock → ${VERSION}');
+"
+
 # ── Commit, tag, push ──────────────────────────────────────────────────────
-git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
 git commit -m "${MESSAGE}"
 git tag -a "${TAG}" -m "${MESSAGE}"
 git push
