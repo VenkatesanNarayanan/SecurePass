@@ -22,6 +22,56 @@
 
   let { onClose }: Props = $props();
 
+  // ── Fingerprint unlock (Android; see src-tauri/src/biometric.rs) ─────────
+  let bio = $state({ available: false, enabled: false, passwordIntervalDays: 7 });
+  let bioSetup = $state(false); // showing the master-password step
+  let bioPassword = $state("");
+  let bioBusy = $state(false);
+  let bioError = $state("");
+  let bioSuccess = $state("");
+
+  async function loadBiometric() {
+    try {
+      bio = await invoke("biometric_status");
+    } catch {
+      /* not available (desktop) */
+    }
+  }
+  loadBiometric();
+
+  async function enableBiometric() {
+    if (!bioPassword) { bioError = "Enter your master password."; return; }
+    bioBusy = true;
+    bioError = "";
+    try {
+      // Verifies the password, then shows the fingerprint prompt.
+      await invoke("enable_biometric_unlock", { request: { masterPassword: bioPassword } });
+      bioPassword = "";
+      bioSetup = false;
+      bioSuccess = "Fingerprint unlock is on.";
+      setTimeout(() => (bioSuccess = ""), 4000);
+      await loadBiometric();
+    } catch (e) {
+      bioError = e instanceof Error ? e.message : String(e);
+    } finally {
+      bioBusy = false;
+    }
+  }
+
+  async function disableBiometric() {
+    bioError = "";
+    await invoke("disable_biometric_unlock");
+    bioSuccess = "Fingerprint unlock is off.";
+    setTimeout(() => (bioSuccess = ""), 4000);
+    await loadBiometric();
+  }
+
+  function cancelBiometricSetup() {
+    bioSetup = false;
+    bioPassword = "";
+    bioError = "";
+  }
+
   // Settings state
   let autoLockTimeout = $state(5); // minutes
   let clipboardTimeout = $state(30); // seconds
@@ -90,6 +140,10 @@
     try {
       await invoke("change_master_password", { currentPassword, newPassword });
       pwSuccess = "Master password changed successfully!";
+      if (bio.enabled) {
+        pwSuccess += " Fingerprint unlock was turned off; turn it on again below if you want it.";
+      }
+      await loadBiometric();
       currentPassword = "";
       newPassword = "";
       confirmPassword = "";
@@ -243,6 +297,53 @@
         </div>
       </section>
 
+      {#if bio.available}
+        <!-- Fingerprint unlock -->
+        <section class="section">
+          <h3>Fingerprint unlock</h3>
+          {#if bio.enabled}
+            <p class="hint">
+              On. Your master password is still needed at least every {bio.passwordIntervalDays} days, and after
+              a fingerprint is added to this phone.
+            </p>
+            <div class="row-end">
+              <button type="button" class="btn btn-secondary" onclick={disableBiometric}>Turn off</button>
+            </div>
+          {:else if bioSetup}
+            <div class="field">
+              <label class="label" for="bio-pw">Confirm your master password</label>
+              <input
+                id="bio-pw"
+                class="input"
+                type="password"
+                bind:value={bioPassword}
+                disabled={bioBusy}
+                autocomplete="current-password"
+                onkeydown={(e) => { if (e.key === "Enter") enableBiometric(); }}
+              />
+            </div>
+            <div class="row-end bio-actions">
+              <button type="button" class="btn btn-ghost" onclick={cancelBiometricSetup} disabled={bioBusy}>Cancel</button>
+              <button type="button" class="btn btn-primary" onclick={enableBiometric} disabled={bioBusy}>
+                {#if bioBusy}<span class="spinner"></span> Confirming…{:else}<Icon name="fingerprint" size={16} /> Continue{/if}
+              </button>
+            </div>
+          {:else}
+            <p class="hint">
+              Open your vault with a fingerprint instead of typing the master password. Only a fingerprint works,
+              not the phone's PIN, and the master password is still needed every {bio.passwordIntervalDays} days.
+            </p>
+            <div class="row-end">
+              <button type="button" class="btn btn-primary" onclick={() => (bioSetup = true)}>
+                <Icon name="fingerprint" size={16} /> Turn on
+              </button>
+            </div>
+          {/if}
+          {#if bioError}<div class="msg msg-error">{bioError}</div>{/if}
+          {#if bioSuccess}<div class="msg msg-success">{bioSuccess}</div>{/if}
+        </section>
+      {/if}
+
       <!-- Change master password -->
       <section class="section">
         <h3>Change master password</h3>
@@ -346,6 +447,7 @@
   .pw-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 
   .row-end { display: flex; justify-content: flex-end; }
+  .bio-actions { gap: 8px; }
 
   .cloud { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .cloud-text { flex: 1; min-width: 200px; }

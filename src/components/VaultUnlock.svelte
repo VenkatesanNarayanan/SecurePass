@@ -24,10 +24,57 @@
 
   const strength = $derived(passwordStrength(masterPassword));
 
+  // ── Fingerprint unlock (Android; see src-tauri/src/biometric.rs) ─────────
+  let bioEnabled = $state(false);
+  let bioBusy = $state(false);
+  let bioNote = $state("");
+  // The periodic master-password check is due: hide the fingerprint button.
+  let bioPasswordDue = $state(false);
+  let passwordIntervalDays = $state(7);
+
+  async function checkBiometric() {
+    try {
+      const s = await invoke<{ available: boolean; enabled: boolean; passwordIntervalDays: number }>("biometric_status");
+      bioEnabled = s.enabled;
+      passwordIntervalDays = s.passwordIntervalDays;
+    } catch {
+      bioEnabled = false;
+    }
+  }
+
+  async function unlockWithFingerprint() {
+    if (bioBusy) return;
+    bioBusy = true;
+    error = "";
+    bioNote = "";
+    try {
+      await invoke("unlock_with_biometric");
+      dispatch("unlock");
+    } catch (err) {
+      const msg = typeof err === "string" ? err : err instanceof Error ? err.message : String(err);
+      if (msg === "biometric:cancelled") {
+        // Dismissed: just leave the password field.
+      } else if (msg === "biometric:password_required") {
+        bioPasswordDue = true;
+        bioNote = `For your security, enter your master password. It's needed at least every ${passwordIntervalDays} days, even with fingerprint unlock.`;
+      } else {
+        error = msg;
+        await checkBiometric(); // it may have been turned off (invalidated)
+      }
+    } finally {
+      bioBusy = false;
+    }
+  }
+
   async function checkVaultStatus() {
     try {
       const status = await invoke<VaultStatus>("get_vault_status");
       vaultExists = status.has_vault;
+      if (vaultExists) {
+        await checkBiometric();
+        // Offer the fingerprint straight away when it's set up.
+        if (bioEnabled) unlockWithFingerprint();
+      }
     } catch (err) {
       console.error("Failed to check vault status:", err);
       if (String((err as any)?.message ?? err).includes("invoke")) {
@@ -266,15 +313,22 @@
           </div>
         {/if}
 
+        {#if bioNote}<div class="msg msg-info" role="status">{bioNote}</div>{/if}
         {#if error}<div class="msg msg-error" role="alert">{error}</div>{/if}
 
-        <button type="submit" class="btn btn-primary btn-lg" disabled={loading}>
+        <button type="submit" class="btn btn-primary btn-lg" disabled={loading || bioBusy}>
           {#if loading}
             <span class="spinner"></span> {vaultExists ? "Unlocking…" : "Creating…"}
           {:else}
             {vaultExists ? "Unlock" : "Create vault"}
           {/if}
         </button>
+
+        {#if vaultExists && bioEnabled && !bioPasswordDue}
+          <button type="button" class="btn btn-secondary btn-lg" onclick={unlockWithFingerprint} disabled={loading || bioBusy}>
+            {#if bioBusy}<span class="spinner"></span> Waiting for fingerprint…{:else}<Icon name="fingerprint" size={18} /> Unlock with fingerprint{/if}
+          </button>
+        {/if}
 
         {#if !vaultExists}
           <div class="divider"><span>or</span></div>

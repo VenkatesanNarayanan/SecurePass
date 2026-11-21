@@ -4,6 +4,7 @@ mod crypto;
 mod vault;
 mod commands;
 mod sync;
+mod biometric;
 #[cfg(target_os = "android")]
 mod chrome_opener;
 #[cfg(target_os = "android")]
@@ -62,7 +63,8 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let builder = builder
         .plugin(chrome_opener::init())
-        .plugin(android_native::init());
+        .plugin(android_native::init())
+        .plugin(tauri_plugin_biometric::init());
 
     builder
         .manage(Mutex::new(AppState::default()))
@@ -127,7 +129,11 @@ pub fn run() {
             commands::reauth_and_sync,
             commands::change_master_password,
             commands::check_for_update,
-            commands::set_system_bars_theme
+            commands::set_system_bars_theme,
+            commands::biometric_status,
+            commands::enable_biometric_unlock,
+            commands::disable_biometric_unlock,
+            commands::unlock_with_biometric
         ])
         .run(tauri::generate_context!())
         .expect("error while running SecurePass application");

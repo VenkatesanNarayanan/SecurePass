@@ -135,31 +135,38 @@ fn save_vault(app: &tauri::AppHandle, vault: &Vault, crypto: &CryptoManager) -> 
 
 /// Load vault from encrypted file
 fn load_vault(app: &tauri::AppHandle, master_password: &str) -> Result<Vault, String> {
+    let data = read_vault_file(app)?;
+    let salt = vault_file_salt(&data)?;
+    let crypto = CryptoManager::new(master_password, &salt).map_err(|e| e.to_string())?;
+    // A failed decryption here means the password is wrong.
+    decrypt_vault_file(&data, &crypto).map_err(|_| "Incorrect master password".to_string())
+}
+
+/// Raw `vault.dat`: `[32-byte salt][12-byte nonce][ciphertext]`.
+fn read_vault_file(app: &tauri::AppHandle) -> Result<Vec<u8>, String> {
     let path = get_vault_path(app);
     if !path.exists() {
         return Err("Vault not found".to_string());
     }
-
     let data = fs::read(&path).map_err(|e| e.to_string())?;
     if data.len() < 44 {
         return Err("Invalid vault file".to_string());
     }
+    Ok(data)
+}
 
-    let salt_bytes: [u8; 32] = data[0..32].try_into().map_err(|_| "Invalid salt".to_string())?;
+fn vault_file_salt(data: &[u8]) -> Result<[u8; 32], String> {
+    data[0..32].try_into().map_err(|_| "Invalid salt".to_string())
+}
+
+fn decrypt_vault_file(data: &[u8], crypto: &CryptoManager) -> Result<Vault, String> {
     let nonce_bytes: [u8; 12] = data[32..44].try_into().map_err(|_| "Invalid nonce".to_string())?;
     let nonce = chacha20poly1305::Nonce::from(nonce_bytes);
-    let ciphertext = &data[44..];
-
-    let crypto = CryptoManager::new(master_password, &salt_bytes).map_err(|e| e.to_string())?;
-
-    let decrypted_bytes = crypto.decrypt(ciphertext, &nonce, b"vault").map_err(|_e| {
-        // Return a user-friendly error message for wrong password
-        "Incorrect master password".to_string()
-    })?;
-
+    let decrypted_bytes = crypto
+        .decrypt(&data[44..], &nonce, b"vault")
+        .map_err(|_| "Could not decrypt the vault".to_string())?;
     let json = String::from_utf8(decrypted_bytes).map_err(|e| e.to_string())?;
-    let vault: Vault = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    Ok(vault)
+    serde_json::from_str(&json).map_err(|e| e.to_string())
 }
 
 /// Convert string field type to enum
@@ -172,10 +179,24 @@ fn parse_field_type(field_type: &str) -> Result<FieldType, String> {
     }
 }
 
-/// Tauri Commands
+// ── Tauri Commands ──────────────────────────────────────────────────────────
 
+/// Re-keys or replaces the vault, so a fingerprint enrolment for the old key
+/// is dropped once this succeeds (see biometric.rs).
 #[command]
 pub async fn create_vault(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<AppState>>,
+    request: CreateVaultRequest,
+) -> Result<VaultMetadata, String> {
+    let result = create_vault_inner(app.clone(), state, request).await;
+    if result.is_ok() {
+        crate::biometric::clear(&app);
+    }
+    result
+}
+
+async fn create_vault_inner(
     app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     request: CreateVaultRequest,
@@ -232,8 +253,113 @@ pub async fn unlock_vault(
     state.crypto = Some(crypto);
     state.is_locked = false;
 
+    // Restarts the periodic master-password clock for fingerprint unlock.
+    crate::biometric::note_password_unlock(&app);
+
     let metadata = VaultMetadata::from(state.vault.as_ref().unwrap());
     Ok(metadata)
+}
+
+// ── Fingerprint unlock (Android; see biometric.rs) ───────────────────────────
+
+/// Errors the unlock screen handles itself rather than showing as text.
+const BIOMETRIC_CANCELLED: &str = "biometric:cancelled";
+const BIOMETRIC_PASSWORD_REQUIRED: &str = "biometric:password_required";
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnableBiometricRequest {
+    pub master_password: String,
+}
+
+/// `available`: this device can do fingerprint unlock; `enabled`: it is set up.
+#[command]
+pub async fn biometric_status(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let available = crate::biometric::is_available(&app);
+    Ok(serde_json::json!({
+        "available": available,
+        "enabled": available && crate::biometric::is_enrolled(&app),
+        "passwordIntervalDays": crate::biometric::PASSWORD_INTERVAL_SECS / 86_400,
+    }))
+}
+
+/// Turn on fingerprint unlock. The vault must be unlocked, and the master
+/// password is asked again so an unlocked, unattended phone can't be used
+/// to enrol someone else's fingerprint without it.
+#[command]
+pub async fn enable_biometric_unlock(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<AppState>>,
+    request: EnableBiometricRequest,
+) -> Result<(), String> {
+    let (key, salt) = {
+        let s = state.lock().map_err(|e| e.to_string())?;
+        match (&s.vault, &s.crypto) {
+            (Some(vault), Some(crypto)) if !s.is_locked => (crypto.get_key_bytes(), vault.salt),
+            _ => return Err("Vault is locked".to_string()),
+        }
+    };
+
+    let mut entered = CryptoManager::derive_key(&request.master_password, &salt).map_err(|e| e.to_string())?;
+    // Constant-time comparison of the two derived keys.
+    let diff = entered.iter().zip(key.iter()).fold(0u8, |acc, (a, b)| acc | (a ^ b));
+    entered.iter_mut().for_each(|b| *b = 0);
+    if diff != 0 {
+        return Err("Incorrect master password".to_string());
+    }
+
+    // The fingerprint prompt blocks until the user responds.
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::biometric::enroll(&handle, &key, &salt))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[command]
+pub async fn disable_biometric_unlock(app: tauri::AppHandle) -> Result<(), String> {
+    crate::biometric::clear(&app);
+    Ok(())
+}
+
+/// Unlock with a fingerprint. Errors are user-facing messages, except
+/// `biometric:cancelled` (prompt dismissed) and `biometric:password_required`
+/// (the periodic master-password check is due).
+#[command]
+pub async fn unlock_with_biometric(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<VaultMetadata, String> {
+    let data = read_vault_file(&app)?;
+    let salt = vault_file_salt(&data)?;
+
+    let handle = app.clone();
+    let key = tauri::async_runtime::spawn_blocking(move || crate::biometric::unlock_key(&handle, &salt))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| match e {
+            crate::biometric::UnlockError::Cancelled => BIOMETRIC_CANCELLED.to_string(),
+            crate::biometric::UnlockError::PasswordRequired => BIOMETRIC_PASSWORD_REQUIRED.to_string(),
+            crate::biometric::UnlockError::Invalidated(m) | crate::biometric::UnlockError::Failed(m) => m,
+        })?;
+
+    let mut key = key;
+    let crypto = CryptoManager::from_key_bytes(&key);
+    key.iter_mut().for_each(|b| *b = 0);
+
+    let vault = match decrypt_vault_file(&data, &crypto) {
+        Ok(v) => v,
+        Err(_) => {
+            // The stored key no longer opens this vault (it was re-keyed).
+            crate::biometric::clear(&app);
+            return Err("Fingerprint unlock no longer matches this vault and was turned off. Unlock with your master password, then turn it on again in Settings.".to_string());
+        }
+    };
+
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    s.vault = Some(vault);
+    s.crypto = Some(crypto);
+    s.is_locked = false;
+    Ok(VaultMetadata::from(s.vault.as_ref().unwrap()))
 }
 
 #[command]
@@ -1040,8 +1166,22 @@ pub async fn sync_vault(
 /// header, derives the new key from the user-supplied new password + that salt,
 /// decrypts and merges Drive entries with local entries, re-saves locally using
 /// the new key, and updates AppState — so both devices share the same key.
+/// Re-keys or replaces the vault, so a fingerprint enrolment for the old key
+/// is dropped once this succeeds (see biometric.rs).
 #[command]
 pub async fn reauth_and_sync(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<AppState>>,
+    new_master_password: String,
+) -> Result<SyncResult, String> {
+    let result = reauth_and_sync_inner(app.clone(), state, new_master_password).await;
+    if result.is_ok() {
+        crate::biometric::clear(&app);
+    }
+    result
+}
+
+async fn reauth_and_sync_inner(
     app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     new_master_password: String,
@@ -1158,8 +1298,23 @@ pub async fn reauth_and_sync(
 /// Verifies the current password, generates a fresh Argon2 salt, re-derives
 /// the key from the new password, re-encrypts the vault, saves locally, and
 /// (if Google Drive is connected) re-uploads so other devices stay in sync.
+/// Re-keys or replaces the vault, so a fingerprint enrolment for the old key
+/// is dropped once this succeeds (see biometric.rs).
 #[command]
 pub async fn change_master_password(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<AppState>>,
+    current_password: String,
+    new_password: String,
+) -> Result<(), String> {
+    let result = change_master_password_inner(app.clone(), state, current_password, new_password).await;
+    if result.is_ok() {
+        crate::biometric::clear(&app);
+    }
+    result
+}
+
+async fn change_master_password_inner(
     app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     current_password: String,
@@ -1329,8 +1484,22 @@ pub async fn resolve_conflicts(
 /// vault from Drive, extracts the salt embedded in the file, derives the
 /// decryption key from the user's master password + that salt, decrypts, saves
 /// locally, and marks the sync state as up-to-date.
+/// Re-keys or replaces the vault, so a fingerprint enrolment for the old key
+/// is dropped once this succeeds (see biometric.rs).
 #[command]
 pub async fn restore_vault_from_drive(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<AppState>>,
+    master_password: String,
+) -> Result<VaultMetadata, String> {
+    let result = restore_vault_from_drive_inner(app.clone(), state, master_password).await;
+    if result.is_ok() {
+        crate::biometric::clear(&app);
+    }
+    result
+}
+
+async fn restore_vault_from_drive_inner(
     app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     master_password: String,

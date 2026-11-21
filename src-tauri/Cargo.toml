@@ -37,3 +37,6 @@ tauri-plugin-deep-link = "2.4.9"
 sha2 = "0.11.0"
 base64 = "0.23.0"
 
+# Fingerprint unlock (biometric.rs); its Keystore-backed cipher is Android-only.
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-biometric = "2.5.0"

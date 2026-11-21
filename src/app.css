@@ -356,6 +356,7 @@ input[type="range"], input[type="checkbox"], input[type="radio"] { accent-color:
 }
 .msg-error { background: var(--danger-soft); color: var(--danger-text); }
 .msg-success { background: var(--success-soft); color: var(--success-text); }
+.msg-info { background: var(--accent-soft); color: var(--text); }
 .msg-warning { background: var(--warning-soft); color: var(--warning-text); }
 
 /* ── Modals ───────────────────────────────────────────────────────────────── */
