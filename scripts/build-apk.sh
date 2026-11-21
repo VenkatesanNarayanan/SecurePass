@@ -3,6 +3,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# One EXIT trap for everything (a second `trap ... EXIT` would replace it).
+RESTORE_MANIFEST=""
+TMP_DIR=""
+cleanup() {
+  if [[ -n "$RESTORE_MANIFEST" ]]; then git checkout -- "$RESTORE_MANIFEST"; fi
+  if [[ -n "$TMP_DIR" ]]; then rm -rf "$TMP_DIR"; fi
+}
+trap cleanup EXIT
+
 # ── Android SDK / NDK / JDK ─────────────────────────────────────────────────
 export ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
 NDK_VERSION="$(ls "${ANDROID_HOME}/ndk" | sort -V | tail -n1)"
@@ -15,7 +24,27 @@ echo "NDK_HOME=${NDK_HOME}"
 echo "JAVA_HOME=${JAVA_HOME}"
 
 # ── Build ────────────────────────────────────────────────────────────────
-npm run tauri android build -- --apk true
+# Google Drive sync needs the Android OAuth client ID, which is kept out of
+# the repo (docs/ANDROID_RELEASE.md). It becomes a compile-time constant
+# (SECUREPASS_ANDROID_CLIENT_ID) and the deep-link scheme in the build config.
+if [[ -z "${SECUREPASS_ANDROID_CLIENT_ID:-}" ]]; then
+  echo "warning: SECUREPASS_ANDROID_CLIENT_ID is not set; this APK will have no Google Drive sync." >&2
+  npm run tauri android build -- --apk true
+else
+  export SECUREPASS_ANDROID_CLIENT_ID
+  SCHEME="com.googleusercontent.apps.${SECUREPASS_ANDROID_CLIENT_ID%.apps.googleusercontent.com}"
+  MANIFEST=src-tauri/gen/android/app/src/main/AndroidManifest.xml
+  # The deep-link plugin writes the scheme into the committed manifest during
+  # the build; put the committed version back afterwards so it isn't committed.
+  RESTORE_MANIFEST="$MANIFEST"
+  # Force the deep-link plugin's build script to run, so it writes the scheme
+  # into the manifest even when cargo's cache says nothing changed.
+  for target in aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android; do
+    (cd src-tauri && cargo clean -p tauri-plugin-deep-link --target "$target" --release)
+  done
+  npm run tauri android build -- --apk true \
+    --config "{\"plugins\":{\"deep-link\":{\"mobile\":[{\"scheme\":[\"${SCHEME}\"]}]}}}"
+fi
 
 # ── Locate the unsigned universal release APK ───────────────────────────────
 APK_SRC="$(find src-tauri/gen/android -type f -name '*-unsigned.apk' -path '*universal/release*' | head -n1)"
@@ -38,7 +67,6 @@ if [[ ! -f "$DEBUG_KEYSTORE" ]]; then
 fi
 
 TMP_DIR="$(mktemp -d -t securepass-apk)"
-trap 'rm -rf "$TMP_DIR"' EXIT
 ALIGNED_APK="${TMP_DIR}/aligned.apk"
 SIGNED_APK="${TMP_DIR}/signed.apk"
 

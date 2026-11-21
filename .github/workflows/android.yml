@@ -12,8 +12,11 @@ name: Android
 #   ANDROID_KEYSTORE_PASSWORD  the keystore password
 #   ANDROID_KEY_ALIAS          the key alias inside the keystore
 #   ANDROID_KEY_PASSWORD       the key password
-# Without them the job still builds, but only uploads an unsigned APK for
-# inspection; nothing is published to the website.
+# and, for Google Drive sync, the Android OAuth client ID (kept out of the
+# repo; it becomes a compile-time constant and the deep-link scheme):
+#   ANDROID_GOOGLE_CLIENT_ID   e.g. 1234-abcd.apps.googleusercontent.com
+# Without all of them the job still builds, but only uploads an unsigned APK
+# for inspection; nothing is published to the website.
 
 on:
   workflow_dispatch:
@@ -68,7 +71,34 @@ jobs:
         run: npm ci
 
       - name: Build release APK (arm64)
-        run: npm run tauri android build -- --target aarch64 --apk true
+        env:
+          SECUREPASS_ANDROID_CLIENT_ID: ${{ secrets.ANDROID_GOOGLE_CLIENT_ID }}
+        run: |
+          if [ -z "$SECUREPASS_ANDROID_CLIENT_ID" ]; then
+            echo "::warning::ANDROID_GOOGLE_CLIENT_ID is not set: building without Google Drive sync; the APK won't be published."
+            echo "NO_CLIENT_ID=1" >> "$GITHUB_ENV"
+            npm run tauri android build -- --target aarch64 --apk true
+          else
+            # Google only accepts the reversed client ID as the redirect scheme;
+            # the deep-link plugin needs it in the manifest and app config.
+            SCHEME="com.googleusercontent.apps.${SECUREPASS_ANDROID_CLIENT_ID%.apps.googleusercontent.com}"
+            CONFIG=$(jq -cn --arg s "$SCHEME" '{plugins: {"deep-link": {mobile: [{scheme: [$s]}]}}}')
+            # The deep-link plugin writes the scheme into AndroidManifest.xml from
+            # its build script, which cargo skips when the cached build (rust-cache)
+            # saw the same config; the fresh checkout's manifest would then ship
+            # without it. Cleaning this one small crate forces the script to run.
+            (cd src-tauri && cargo clean -p tauri-plugin-deep-link --target aarch64-linux-android --release)
+            npm run tauri android build -- --target aarch64 --apk true --config "$CONFIG"
+
+            # Without the scheme in the manifest, Google's sign-in redirect never
+            # reaches the app, so fail rather than ship broken Drive sync.
+            APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*-release-unsigned.apk' | head -1)
+            BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n1)
+            if ! "${BUILD_TOOLS}aapt2" dump xmltree --file AndroidManifest.xml "$APK" | grep -qF "$SCHEME"; then
+              echo "::error::The OAuth redirect scheme is missing from the APK's AndroidManifest.xml."
+              exit 1
+            fi
+          fi
 
       - name: Sign APK
         id: sign
@@ -87,8 +117,9 @@ jobs:
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n1)
           mkdir -p _android
 
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set: uploading an unsigned APK only; nothing will be published."
+          if [ -z "$KEYSTORE_BASE64" ] || [ -n "$NO_CLIENT_ID" ]; then
+            [ -z "$KEYSTORE_BASE64" ] && echo "::warning::ANDROID_KEYSTORE_BASE64 is not set."
+            echo "::warning::Uploading an unsigned test APK only; nothing will be published."
             cp "$UNSIGNED" "_android/SecurePass_${VER}_android_arm64-unsigned.apk"
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
