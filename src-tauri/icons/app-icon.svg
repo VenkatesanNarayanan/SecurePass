@@ -5,6 +5,13 @@
        then keep only the files already tracked in src-tauri/icons/ (it also
        creates android/ and ios/ folders this project doesn't use), and copy
        128x128.png to static/favicon.png and static/app-icon.png.
+       Android launcher icons are adaptive (separate layers): android-bg.svg is
+       the tile gradient full-bleed, android-fg.svg the shield and keyhole.
+       Render each to a 1024 px PNG (npx tauri icon <file>.svg -p 1024 -o <dir>),
+       run npx tauri icon on a manifest
+       {"default": "app-icon.png", "android_bg": "android-bg.png", "android_fg": "android-fg.png"}
+       with -o <dir>, and copy <dir>/android/* into
+       src-tauri/gen/android/app/src/main/res/.
        Tile follows the macOS icon grid (824 px tile, 100 px margin). -->
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">

@@ -23,7 +23,8 @@ The Android project is in the repo and builds from `main` (`scripts/build-apk.sh
   - [x] Keyboard shortcuts and hover-only controls: there are no hover-only controls; the shortcuts are harmless without a keyboard.
 - [x] **Autofill.** Android's autofill service offered to save an entry's title and password to Google Password Manager. `MainActivity.kt` now excludes the whole app from autofill.
 - [x] **Status bar icons follow the theme.** `theme.ts` calls `set_system_bars_theme` whenever the effective theme changes, so the icons stay visible in light and dark (including a Light/Dark override).
-- [ ] **Regenerate the Android/iOS icons** (`gen/android/app/src/main/res/mipmap-*`, `icons/ios/`, `icons/icon-android-fg.png`) from `app-icon.svg`; they still show the old icon.
+- [x] **Android launcher icon** regenerated from the redesigned icon as an adaptive icon (`src-tauri/icons/android-bg.svg` + `android-fg.svg`; steps in the `app-icon.svg` header).
+- [ ] **iOS icons** (`src-tauri/icons/ios/`) still show the old logo; regenerate them when the iOS project is set up (they need a full-bleed, non-transparent square).
 - [x] **Commit the Android project.** `src-tauri/gen/android` is in the repo; build outputs, `*.apk` and `.kotlin/` are ignored. No release keystore exists yet (`scripts/build-apk.sh` signs with the debug key).
 - [x] **Android job in CI.** `.github/workflows/android.yml` builds an arm64 release APK (~17 MB, under the website's 25 MiB limit) on every tag via `release.yml`, or by hand from the Actions tab. A failed Android build doesn't block the desktop release.
 - [ ] **Create the release keystore and add the four `ANDROID_*` secrets** (steps in `docs/ANDROID_RELEASE.md`). Until then the job only uploads an unsigned APK and the website lists no Android download.
