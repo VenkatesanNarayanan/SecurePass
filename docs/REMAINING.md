@@ -25,8 +25,10 @@ The Android project is in the repo and builds from `main` (`scripts/build-apk.sh
 - [x] **Status bar icons follow the theme.** `theme.ts` calls `set_system_bars_theme` whenever the effective theme changes, so the icons stay visible in light and dark (including a Light/Dark override).
 - [ ] **Regenerate the Android/iOS icons** (`gen/android/app/src/main/res/mipmap-*`, `icons/ios/`, `icons/icon-android-fg.png`) from `app-icon.svg`; they still show the old icon.
 - [x] **Commit the Android project.** `src-tauri/gen/android` is in the repo; build outputs, `*.apk` and `.kotlin/` are ignored. No release keystore exists yet (`scripts/build-apk.sh` signs with the debug key).
-- [ ] **Add an Android job to `.github/workflows/release.yml`** that builds a signed APK/AAB, with the keystore in GitHub Actions secrets. Add an Android download to the website.
-- [x] **Update check on Android.** `check_for_update` returns no update on mobile until the website offers an APK; remove that early return when it does.
+- [x] **Android job in CI.** `.github/workflows/android.yml` builds an arm64 release APK (~17 MB, under the website's 25 MiB limit) on every tag via `release.yml`, or by hand from the Actions tab. A failed Android build doesn't block the desktop release.
+- [ ] **Create the release keystore and add the four `ANDROID_*` secrets** (steps in `docs/ANDROID_RELEASE.md`). Until then the job only uploads an unsigned APK and the website lists no Android download.
+- [ ] **Show Android on the website.** `release-data.js` gets an `android` entry once a signed APK exists, but `scripts/downloads.js` in `securepass-web` only renders keys starting with `macos`/`windows`/`linux`, and detects Android phones as Linux (their user agent contains "Linux").
+- [x] **Update check on Android.** `version.json` has an `android` section (version + APK link) only once a signed APK is published, and the Android app compares against that section alone, so desktop-only releases don't trigger its banner. iOS never shows the banner (no iOS releases). Android builds from before this change still compare against the desktop version and show the banner until they're updated.
 
 ## 2. App security improvements
 
@@ -52,7 +54,7 @@ Bundle these into one release, 1.1.22. All are documented as known limitations i
 
 - [ ] A "What's new" section for the latest release.
 - [ ] A 1200×630 Open Graph image, so shared links show a proper preview card.
-- [ ] An Android download once the APK is built in CI (see 1).
+- [ ] An Android download: handle the `android` key in `scripts/downloads.js` and detect Android before Linux (see 1).
 
 ## Notes for the other laptop
 

@@ -473,6 +473,19 @@
     loadSyncStatus().then(() => checkSyncNeeded());
   }
 
+  // Open the download in the system browser (an APK on Android, the
+  // website's download section on desktop) instead of inside the WebView.
+  async function openDownload(event: MouseEvent) {
+    if (!updateInfo?.downloadUrl) return;
+    event.preventDefault();
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(updateInfo.downloadUrl);
+    } catch (error) {
+      showNotice("error", "Couldn't open the download link: " + error);
+    }
+  }
+
   // ── Startup ────────────────────────────────────────────────────────────────
   loadAll();
   loadSyncStatus().then(() => checkSyncNeeded());
@@ -622,7 +635,7 @@
         <span class="banner-text">
           SecurePass <strong>v{updateInfo.latestVersion}</strong> is available — you're on v{updateInfo.currentVersion ?? "…"}.
         </span>
-        <a href={updateInfo.downloadUrl} target="_blank" rel="noopener" class="btn btn-primary banner-btn">Download</a>
+        <a href={updateInfo.downloadUrl} target="_blank" rel="noopener" class="btn btn-primary banner-btn" onclick={openDownload}>Download</a>
         <button class="icon-btn" onclick={() => (updateInfo = null)} aria-label="Dismiss update notice">
           <Icon name="close" size={15} />
         </button>

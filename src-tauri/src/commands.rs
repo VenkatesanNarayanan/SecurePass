@@ -1388,9 +1388,8 @@ pub async fn restore_vault_from_drive(
 pub async fn check_for_update() -> Result<serde_json::Value, String> {
     let current = env!("CARGO_PKG_VERSION");
 
-    // The website's download section has no Android/iOS build to point to,
-    // so mobile never shows the update banner.
-    if cfg!(mobile) {
+    // No iOS builds are released, so there is never anything to offer.
+    if cfg!(target_os = "ios") {
         return Ok(serde_json::json!({ "hasUpdate": false, "currentVersion": current }));
     }
 
@@ -1404,19 +1403,30 @@ pub async fn check_for_update() -> Result<serde_json::Value, String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let latest = resp["version"].as_str().unwrap_or("").to_string();
-    let has_update = is_newer(&latest, current);
+    Ok(update_info(&resp, current, cfg!(target_os = "android")))
+}
 
-    Ok(serde_json::json!({
+/// Compare `version.json` against the running version.
+///
+/// Desktop and Android are released separately: the top-level fields describe
+/// the desktop release, and the `android` section (written by release.yml only
+/// when a signed APK was published) describes the newest APK. The Android app
+/// looks only at that section, so it never offers a desktop-only release; with
+/// no section there is no update.
+fn update_info(resp: &serde_json::Value, current: &str, android: bool) -> serde_json::Value {
+    let release = if android { &resp["android"] } else { resp };
+    let latest = release["version"].as_str().unwrap_or("").to_string();
+    let has_update = !latest.is_empty() && is_newer(&latest, current);
+
+    serde_json::json!({
         "hasUpdate": has_update,
         "currentVersion": current,
         "latestVersion": latest,
-        "releasedAt": resp["released_at"],
-        "downloadUrl": resp["download_url"],
-    }))
+        "releasedAt": release["released_at"],
+        "downloadUrl": release["download_url"],
+    })
 }
 
-/// Returns true if `remote` is a strictly higher semver than `local`.
 fn is_newer(remote: &str, local: &str) -> bool {
     let parse = |v: &str| -> (u32, u32, u32) {
         let mut parts = v.trim_start_matches('v').splitn(3, '.');
@@ -1463,4 +1473,46 @@ pub async fn set_system_bars_theme(
         app.android_native().set_system_bars_dark(dark)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_info;
+    use serde_json::json;
+
+    fn version_json(android: Option<&str>) -> serde_json::Value {
+        let mut v = json!({
+            "version": "1.2.0",
+            "download_url": "https://example.com/#download",
+        });
+        if let Some(ver) = android {
+            v["android"] = json!({ "version": ver, "download_url": "https://example.com/app.apk" });
+        }
+        v
+    }
+
+    #[test]
+    fn desktop_uses_top_level_version() {
+        let info = update_info(&version_json(Some("1.1.0")), "1.1.0", false);
+        assert_eq!(info["hasUpdate"], true);
+        assert_eq!(info["latestVersion"], "1.2.0");
+        assert_eq!(info["downloadUrl"], "https://example.com/#download");
+    }
+
+    #[test]
+    fn android_ignores_desktop_only_release() {
+        let info = update_info(&version_json(None), "1.1.0", true);
+        assert_eq!(info["hasUpdate"], false);
+    }
+
+    #[test]
+    fn android_uses_android_section() {
+        let info = update_info(&version_json(Some("1.1.5")), "1.1.0", true);
+        assert_eq!(info["hasUpdate"], true);
+        assert_eq!(info["latestVersion"], "1.1.5");
+        assert_eq!(info["downloadUrl"], "https://example.com/app.apk");
+
+        let same = update_info(&version_json(Some("1.1.0")), "1.1.0", true);
+        assert_eq!(same["hasUpdate"], false);
+    }
 }

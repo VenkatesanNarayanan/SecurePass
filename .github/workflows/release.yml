@@ -111,9 +111,17 @@ jobs:
           path: _release_artifacts/
           retention-days: 1
 
+  # ── Android APK (see android.yml) ──────────────────────────────────────────
+  build-android:
+    uses: ./.github/workflows/android.yml
+    secrets: inherit
+
   # ── Push release binaries to securepass-web and update download links ──────
+  # Runs once the desktop builds succeed, even if the Android build failed or
+  # was skipped for lack of a signing key: the APK is then simply not listed.
   publish-web:
-    needs: build
+    needs: [build, build-android]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout securepass-web
@@ -137,6 +145,17 @@ jobs:
           echo "Files in releases/${TAG}:"
           ls -lh "releases/${TAG}/"
 
+      - name: Prune old releases (keep 2 most recent)
+        run: |
+          # Sort release dirs by version descending, remove anything beyond the 2 newest.
+          if [ -d releases ]; then
+            mapfile -t OLD < <(ls -d releases/v* 2>/dev/null | sort -V -r | tail -n +3)
+            for dir in "${OLD[@]}"; do
+              echo "Removing old release: $dir"
+              git rm -rf "$dir"
+            done
+          fi
+
       - name: Write release-data.js and version.json
         run: |
           TAG="${{ github.ref_name }}"
@@ -147,6 +166,29 @@ jobs:
           FILE_VER=$(basename "$PKG" | sed 's/SecurePass_//; s/_macos\.pkg//')
           VER="${FILE_VER}"
           RELEASED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SITE="https://www.securepass.wonderstek.com"
+          # Android is released separately from desktop: use this release's
+          # signed APK, or keep the previous one listed if this release has
+          # none (Android build failed or skipped) and its file wasn't pruned.
+          ANDROID_VER="" ANDROID_PATH="" ANDROID_AT=""
+          APK=$(ls releases/${TAG}/*_android_arm64.apk 2>/dev/null | head -1)
+          if [ -n "$APK" ]; then
+            ANDROID_VER=$(basename "$APK" | sed 's/^SecurePass_//; s/_android_arm64\.apk$//')
+            ANDROID_PATH="$APK"
+            ANDROID_AT="$RELEASED_AT"
+          elif [ -f version.json ]; then
+            PREV_URL=$(jq -r '.android.download_url // empty' version.json)
+            PREV_PATH="${PREV_URL#"$SITE"/}"
+            if [ -n "$PREV_URL" ] && [ -f "$PREV_PATH" ]; then
+              ANDROID_VER=$(jq -r '.android.version' version.json)
+              ANDROID_PATH="$PREV_PATH"
+              ANDROID_AT=$(jq -r '.android.released_at' version.json)
+            fi
+          fi
+          ANDROID_ENTRY=""
+          if [ -n "$ANDROID_PATH" ]; then
+            ANDROID_ENTRY=$(printf ',\n    "android": {\n      "label": "Android (APK, v%s)",\n      "url": "%s",\n      "note": "64-bit phones (Android 7+). Allow installs from your browser when asked"\n    }' "$ANDROID_VER" "$ANDROID_PATH")
+          fi
           cat > release-data.js <<EOF
           window.SECUREPASS_RELEASE = {
             "version": "${VER}",
@@ -175,7 +217,7 @@ jobs:
               "linux_deb": {
                 "label": "Linux (DEB — Ubuntu / Debian)",
                 "url": "${BASE}/SecurePass_${VER}_amd64.deb"
-              }
+              }${ANDROID_ENTRY}
             }
           };
           EOF
@@ -188,16 +230,12 @@ jobs:
             "download_url": "https://www.securepass.wonderstek.com/#download"
           }
           EOF
-
-      - name: Prune old releases (keep 2 most recent)
-        run: |
-          # Sort release dirs by version descending, remove anything beyond the 2 newest.
-          if [ -d releases ]; then
-            mapfile -t OLD < <(ls -d releases/v* 2>/dev/null | sort -V -r | tail -n +3)
-            for dir in "${OLD[@]}"; do
-              echo "Removing old release: $dir"
-              git rm -rf "$dir"
-            done
+          # The Android app reads only this section for its update banner, so it
+          # is offered an update only when a newer APK exists.
+          if [ -n "$ANDROID_PATH" ]; then
+            jq --arg v "$ANDROID_VER" --arg at "$ANDROID_AT" --arg url "$SITE/$ANDROID_PATH" \
+              '.android = {version: $v, released_at: $at, download_url: $url}' version.json > version.json.tmp
+            mv version.json.tmp version.json
           fi
 
       - name: Commit and push
