@@ -1,6 +1,6 @@
 # Android release signing
 
-`.github/workflows/android.yml` builds a release APK for 64-bit ARM phones on every version tag (called from `release.yml`). The job signs the APK and publishes it to the website only when all the secrets below exist. Without them it uploads an unsigned APK as a workflow artifact and publishes nothing.
+`.github/workflows/android.yml` builds a release APK for 64-bit ARM phones on every version tag (called from `release.yml`). The job signs the APK and publishes it to the website and the GitHub Release only when all the secrets below exist. Without them it uploads an unsigned APK as a workflow artifact and publishes nothing.
 
 ## 1. Create the release keystore (once)
 

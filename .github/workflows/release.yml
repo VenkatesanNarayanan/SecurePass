@@ -116,6 +116,31 @@ jobs:
     uses: ./.github/workflows/android.yml
     secrets: inherit
 
+  # ── Attach the signed APK to the GitHub Release ────────────────────────────
+  # The release itself is created by tauri-action in the desktop build job, so
+  # this waits for both; it is skipped when there is no signed APK.
+  attach-android:
+    needs: [build, build-android]
+    if: ${{ !cancelled() && needs.build-android.outputs.signed == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download signed APK
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts-android
+          path: _android
+
+      - name: Upload APK to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::GitHub Release $TAG doesn't exist (did the desktop build fail before creating it?)."
+            exit 1
+          fi
+          gh release upload "$TAG" _android/*.apk --repo "$GITHUB_REPOSITORY" --clobber
+
   # ── Push release binaries to securepass-web and update download links ──────
   # Runs once the desktop builds succeed, even if the Android build failed or
   # was skipped for lack of a signing key: the APK is then simply not listed.

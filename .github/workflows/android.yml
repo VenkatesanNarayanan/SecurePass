@@ -21,6 +21,10 @@ name: Android
 on:
   workflow_dispatch:
   workflow_call:
+    outputs:
+      signed:
+        description: "'true' when a signed, publishable APK was uploaded as release-artifacts-android"
+        value: ${{ jobs.build-android.outputs.signed }}
 
 permissions:
   contents: read
@@ -31,6 +35,8 @@ env:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
 
     steps:
       - name: Checkout code
