@@ -368,6 +368,9 @@ input[type="range"], input[type="checkbox"], input[type="radio"] { accent-color:
   align-items: center;
   justify-content: center;
   padding: 24px;
+  /* Keep dialogs clear of the status/navigation bars on edge-to-edge phones. */
+  padding-top: calc(24px + env(safe-area-inset-top));
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
   background: var(--overlay);
 }
 
@@ -375,6 +378,7 @@ input[type="range"], input[type="checkbox"], input[type="radio"] { accent-color:
   width: 100%;
   max-width: 440px;
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   background: var(--bg);

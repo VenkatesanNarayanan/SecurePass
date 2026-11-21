@@ -404,4 +404,12 @@
   @media (max-width: 1100px) {
     .grid { grid-template-columns: minmax(0, 1fr); }
   }
+
+  @media (max-width: 700px) {
+    .head { padding: 12px 16px; }
+    h2 { font-size: 18px; }
+    .head-actions .btn { min-height: 44px; }
+    .body { padding: 16px 16px 32px; }
+    .cat-chip { min-height: 44px; }
+  }
 </style>

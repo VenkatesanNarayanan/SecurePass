@@ -548,13 +548,28 @@ pub async fn get_tags(state: tauri::State<'_, Mutex<AppState>>) -> Result<Vec<St
 
 #[command]
 pub async fn copy_to_clipboard(app: tauri::AppHandle, text: String) -> Result<(), String> {
-    use tauri_plugin_clipboard_manager::ClipboardExt;
-    app.clipboard().write_text(text).map_err(|e| e.to_string())
+    // Android: mark the clip sensitive so the system preview hides it.
+    #[cfg(target_os = "android")]
+    {
+        use crate::android_native::AndroidNativeExt;
+        app.android_native().copy_sensitive(&text)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        app.clipboard().write_text(text).map_err(|e| e.to_string())
+    }
 }
 
 #[command]
 pub async fn clear_clipboard(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use crate::android_native::AndroidNativeExt;
+        app.android_native().clear_clipboard()
+    }
     // Copy empty string to clear clipboard
+    #[cfg(not(target_os = "android"))]
     copy_to_clipboard(app, "".to_string()).await
 }
 
@@ -1373,6 +1388,12 @@ pub async fn restore_vault_from_drive(
 pub async fn check_for_update() -> Result<serde_json::Value, String> {
     let current = env!("CARGO_PKG_VERSION");
 
+    // The website's download section has no Android/iOS build to point to,
+    // so mobile never shows the update banner.
+    if cfg!(mobile) {
+        return Ok(serde_json::json!({ "hasUpdate": false, "currentVersion": current }));
+    }
+
     let resp = reqwest::Client::new()
         .get("https://www.securepass.wonderstek.com/version.json")
         .timeout(std::time::Duration::from_secs(5))
@@ -1426,4 +1447,20 @@ fn load_vault_from_path(file_path: &str, master_password: &str) -> Result<Vault,
     let json = String::from_utf8(decrypted_bytes).map_err(|e| e.to_string())?;
     let vault: Vault = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     Ok(vault)
+}
+
+/// Match the Android status/navigation bar icon colour to the app theme
+/// (see `android_native.rs`). Desktop window chrome follows the OS, so this is
+/// a no-op there.
+#[command]
+pub async fn set_system_bars_theme(
+    #[allow(unused_variables)] app: tauri::AppHandle,
+    #[allow(unused_variables)] dark: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use crate::android_native::AndroidNativeExt;
+        app.android_native().set_system_bars_dark(dark)?;
+    }
+    Ok(())
 }

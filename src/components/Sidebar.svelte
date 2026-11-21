@@ -20,6 +20,10 @@
     syncTitle: string;
     syncError: string;
     searchInput?: HTMLInputElement | null;
+    /** False on phones, where the search box lives in the top bar instead. */
+    showSearch?: boolean;
+    /** Called after a category or action is picked (closes the phone drawer). */
+    onNavigate?: () => void;
     onSync: () => void;
     onResolveConflicts: () => void;
     onOpenSettings: () => void;
@@ -39,6 +43,8 @@
     syncTitle,
     syncError,
     searchInput = $bindable(null),
+    showSearch = true,
+    onNavigate = () => {},
     onSync,
     onResolveConflicts,
     onOpenSettings,
@@ -68,6 +74,7 @@
     <span class="brand-name">SecurePass</span>
   </div>
 
+  {#if showSearch}
   <div class="search">
     <Icon name="search" size={15} />
     <label for="vault-search" class="sr-only">Search vault</label>
@@ -88,9 +95,10 @@
       <span class="kbd">{isMac ? "⌘K" : "Ctrl K"}</span>
     {/if}
   </div>
+  {/if}
 
   <div class="group">
-    <button class="nav-item" class:active={selectedCategory === ""} onclick={() => (selectedCategory = "")}>
+    <button class="nav-item" class:active={selectedCategory === ""} onclick={() => { selectedCategory = ""; onNavigate(); }}>
       <Icon name="list" size={15} />
       <span class="nav-label">All items</span>
       <span class="count">{totalCount}</span>
@@ -104,7 +112,7 @@
         <button
           class="nav-item"
           class:active={selectedCategory === cat.key}
-          onclick={() => (selectedCategory = selectedCategory === cat.key ? "" : cat.key)}
+          onclick={() => { selectedCategory = selectedCategory === cat.key ? "" : cat.key; onNavigate(); }}
         >
           <span class="dot" style="background: {cat.dot}"></span>
           <span class="nav-label">{cat.label}</span>
@@ -143,7 +151,7 @@
           <div class="sync-error">{syncError}</div>
         {/if}
         {#if syncStatus.hasPendingConflicts}
-          <button class="btn btn-secondary sync-btn" onclick={onResolveConflicts}>Resolve conflicts</button>
+          <button class="btn btn-secondary sync-btn" onclick={() => { onNavigate(); onResolveConflicts(); }}>Resolve conflicts</button>
         {:else}
           <button class="btn btn-secondary sync-btn" onclick={onSync} disabled={syncing}>Sync now</button>
         {/if}
@@ -155,23 +163,23 @@
           <span class="sync-state">Not syncing</span>
         </div>
         <div class="sync-sub">Keep an encrypted copy in your Google Drive.</div>
-        <button class="btn btn-secondary sync-btn" onclick={onOpenSettings}>Connect Google Drive</button>
+        <button class="btn btn-secondary sync-btn" onclick={() => { onNavigate(); onOpenSettings(); }}>Connect Google Drive</button>
       </div>
     {/if}
 
     <div class="actions">
-      <button class="btn btn-ghost" onclick={onImport} title="Import a .spvault backup or PasswordLocker JSON">
+      <button class="btn btn-ghost" onclick={() => { onNavigate(); onImport(); }} title="Import a .spvault backup or PasswordLocker JSON">
         <Icon name="import" size={15} /> Import
       </button>
-      <button class="btn btn-ghost" onclick={onExport} title="Export an encrypted .spvault backup">
+      <button class="btn btn-ghost" onclick={() => { onNavigate(); onExport(); }} title="Export an encrypted .spvault backup">
         <Icon name="export" size={15} /> Export
       </button>
     </div>
     <div class="actions">
-      <button class="btn btn-ghost" onclick={onOpenSettings}>
+      <button class="btn btn-ghost" onclick={() => { onNavigate(); onOpenSettings(); }}>
         <Icon name="settings" size={15} /> Settings
       </button>
-      <button class="btn btn-ghost" onclick={onLock} title="Lock vault ({isMac ? '⌘' : 'Ctrl+'}L)">
+      <button class="btn btn-ghost" onclick={() => { onNavigate(); onLock(); }} title="Lock vault ({isMac ? '⌘' : 'Ctrl+'}L)">
         <Icon name="lock" size={15} /> Lock
       </button>
     </div>
@@ -261,4 +269,16 @@
 
   .actions { display: flex; gap: 4px; }
   .actions .btn { flex: 1; justify-content: flex-start; padding: 0 10px; min-height: 34px; }
+
+  /* Phone drawer: full height incl. system bars, finger-sized targets. */
+  @media (max-width: 700px) {
+    .sidebar {
+      width: 100%;
+      padding-top: calc(16px + env(safe-area-inset-top));
+      padding-bottom: calc(16px + env(safe-area-inset-bottom));
+      border-right: 0;
+    }
+    .nav-item { min-height: 44px; font-size: 14px; }
+    .actions .btn, .sync-btn { min-height: 44px; }
+  }
 </style>

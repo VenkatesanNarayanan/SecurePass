@@ -6,6 +6,8 @@ mod commands;
 mod sync;
 #[cfg(target_os = "android")]
 mod chrome_opener;
+#[cfg(target_os = "android")]
+mod android_native;
 
 use std::sync::Mutex;
 use commands::AppState;
@@ -58,7 +60,9 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init());
 
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(chrome_opener::init());
+    let builder = builder
+        .plugin(chrome_opener::init())
+        .plugin(android_native::init());
 
     builder
         .manage(Mutex::new(AppState::default()))
@@ -122,7 +126,8 @@ pub fn run() {
             commands::restore_vault_from_drive,
             commands::reauth_and_sync,
             commands::change_master_password,
-            commands::check_for_update
+            commands::check_for_update,
+            commands::set_system_bars_theme
         ])
         .run(tauri::generate_context!())
         .expect("error while running SecurePass application");

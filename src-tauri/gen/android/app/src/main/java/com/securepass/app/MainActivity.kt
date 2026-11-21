@@ -1,5 +1,7 @@
 package com.securepass.app
 
+import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import androidx.activity.enableEdgeToEdge
@@ -12,13 +14,15 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 
-    // The app UI has no dark mode — it's always a white/light background.
-    // enableEdgeToEdge() otherwise picks status/nav bar icon color from the
-    // system's day/night setting, so a phone in dark mode gets white icons
-    // on our white header and they vanish. Force dark (visible) icons always.
+    // The app draws behind the status/nav bars, so their icon colour must
+    // match the app theme. Start from the system day/night setting (the app's
+    // default "System" theme); once the web UI loads it reports the theme it
+    // actually applied, including a Light/Dark override, via AndroidNativePlugin.
+    val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+      Configuration.UI_MODE_NIGHT_YES
     val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-    insetsController.isAppearanceLightStatusBars = true
-    insetsController.isAppearanceLightNavigationBars = true
+    insetsController.isAppearanceLightStatusBars = !night
+    insetsController.isAppearanceLightNavigationBars = !night
 
     // enableEdgeToEdge() draws content behind the on-screen keyboard, which
     // makes windowSoftInputMode="adjustResize" (in AndroidManifest.xml) a
@@ -28,6 +32,13 @@ class MainActivity : TauriActivity() {
     // way for the web layer to detect or correct that. Apply the IME inset
     // as bottom padding on the content view so the WebView genuinely
     // resizes, restoring adjustResize-equivalent behavior.
+    // Keep Android's autofill service (Google Password Manager, etc.) out of
+    // the whole app. Otherwise it reads the entry form and offers to save a
+    // vault entry's title and password to the user's Google account.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+    }
+
     val content = findViewById<View>(android.R.id.content)
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
       val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom

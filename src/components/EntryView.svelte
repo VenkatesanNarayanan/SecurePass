@@ -279,4 +279,16 @@
 
   .dates { font-size: 12px; color: var(--text-muted); }
   .muted { margin: 0; color: var(--text-muted); }
+
+  @media (max-width: 700px) {
+    .head { padding: 16px 16px 14px; gap: 12px; }
+    .tile { width: 44px; height: 44px; font-size: 18px; border-radius: 11px; }
+    h2 { font-size: 19px; }
+    .head-actions { width: 100%; }
+    .head-actions .btn { flex: 1; min-height: 44px; }
+    .head-actions .icon-btn { width: 44px; height: 44px; }
+    .body { padding: 16px 16px 28px; }
+    .field-row { padding: 8px 6px 8px 14px; }
+    .field-row :global(.icon-btn) { width: 44px; height: 44px; }
+  }
 </style>

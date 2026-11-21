@@ -12,18 +12,21 @@ Open items as of 2026-11-11 (after the v1.1.21 release). Check an item off or de
 
 ## 1. Android app (highest priority)
 
-The Android build was made on another laptop. Its project (`src-tauri/gen/android`) is not in this repo, and the release workflow builds no APK. Everything since the Android build (redesigned UI, dark mode, recently-used sort, dependency security fixes) reaches the phone only after you rebuild from the current `main`.
+The Android project is in the repo and builds from `main` (`scripts/build-apk.sh`, or `npm run tauri android build -- --debug --target aarch64 --apk true` for a quick emulator build). The release workflow builds no APK yet.
 
-- [ ] **Make the start-up window code desktop-only.** `fit_to_work_area` in `src-tauri/src/lib.rs` sizes and centres a desktop window using the monitor's work area, and `tauri.conf.json` now creates the window hidden (`"visible": false`) and shows it after placing it. On Android, wrap the `fit_to_work_area` function and its call in `#[cfg(desktop)]`, and check that the window still appears (`window.show()` after the hidden start). If not, use a mobile-specific config (`tauri.android.conf.json`) with `"visible": true`.
-- [ ] **Phone layout.** The redesign is a three-pane desktop layout: `Sidebar`, `EntryList` and the detail pane side by side in `Dashboard.svelte`, with `minWidth` 800 in `tauri.conf.json` and only a few breakpoints (1100/1000/860/700 px). Phones need one pane at a time: entry list → entry view/form with a back button, and the sidebar as a slide-out menu. Keep using the CSS variables in `src/app.css`.
+- [x] **Make the start-up window code desktop-only.** `fit_to_work_area` and `set_focus` are `#[cfg(desktop)]`; `window.show()` runs on every platform, and the window appears on Android.
+- [x] **Phone layout.** Below 700 px `Dashboard.svelte` shows one pane at a time (list → entry view/form with a back button in a top bar), the search box moves to the top bar, and the sidebar is a slide-out drawer. Each open layer gets a shallow history entry (SvelteKit `pushState`), so Android's back gesture closes the entry or drawer instead of leaving the app. Dialogs and bars respect the safe-area insets (the activity is edge-to-edge).
 - [ ] **Check the desktop-only pieces on Android:**
-  - Google sign-in uses a local redirect listener (`sync.rs`). It may not work on Android and may need a custom-scheme / app-link redirect or a different OAuth client type.
-  - Clipboard copy/clear (`commands::copy_to_clipboard`, `clear_clipboard`).
-  - File dialogs for export/import (`tauri-plugin-dialog`, `tauri-plugin-fs`).
-  - Keyboard shortcuts and hover-only controls.
-- [ ] **Commit the Android project.** Run `npm run tauri android init` (or copy `src-tauri/gen/android` from the laptop) and commit it. Keep signing keys and `keystore.properties` out of git.
+  - [ ] Google sign-in: a mobile flow exists (PKCE + custom-scheme deep link, `sync::start_oauth_flow_mobile`, Chrome forced via `chrome_opener.rs`), but it hasn't been tested since the rebase.
+  - [x] Clipboard copy/clear: on Android these go through `android_native.rs`, which marks copies as sensitive (Android 13+ shows dots in the clipboard preview) and clears with `clearPrimaryClip()`.
+  - [ ] File dialogs for export/import (`tauri-plugin-dialog`): untested on Android.
+  - [x] Keyboard shortcuts and hover-only controls: there are no hover-only controls; the shortcuts are harmless without a keyboard.
+- [x] **Autofill.** Android's autofill service offered to save an entry's title and password to Google Password Manager. `MainActivity.kt` now excludes the whole app from autofill.
+- [x] **Status bar icons follow the theme.** `theme.ts` calls `set_system_bars_theme` whenever the effective theme changes, so the icons stay visible in light and dark (including a Light/Dark override).
+- [ ] **Regenerate the Android/iOS icons** (`gen/android/app/src/main/res/mipmap-*`, `icons/ios/`, `icons/icon-android-fg.png`) from `app-icon.svg`; they still show the old icon.
+- [x] **Commit the Android project.** `src-tauri/gen/android` is in the repo; build outputs, `*.apk` and `.kotlin/` are ignored. No release keystore exists yet (`scripts/build-apk.sh` signs with the debug key).
 - [ ] **Add an Android job to `.github/workflows/release.yml`** that builds a signed APK/AAB, with the keystore in GitHub Actions secrets. Add an Android download to the website.
-- [ ] **Update check on Android.** `check_for_update` reads the same `version.json` and links to `#download`, which has no APK yet. Either publish the APK there or hide the banner on mobile.
+- [x] **Update check on Android.** `check_for_update` returns no update on mobile until the website offers an APK; remove that early return when it does.
 
 ## 2. App security improvements
 

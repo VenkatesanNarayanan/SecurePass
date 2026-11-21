@@ -214,4 +214,11 @@
   @media (max-width: 1000px) {
     .list-pane { width: 260px; }
   }
+
+  @media (max-width: 700px) {
+    .list-header { padding: 14px 16px 10px; }
+    .list-header .btn { min-height: 44px; }
+    .chip { padding: 8px 12px; font-size: 13px; }
+    .row { min-height: 64px; }
+  }
 </style>

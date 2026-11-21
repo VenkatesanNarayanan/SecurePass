@@ -1,5 +1,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { untrack } from "svelte";
+  import { pushState } from "$app/navigation";
+  import { page } from "$app/state";
   import Sidebar from "./Sidebar.svelte";
   import EntryList from "./EntryList.svelte";
   import EntryForm from "./EntryForm.svelte";
@@ -39,6 +42,84 @@
   let selectedId = $state<string | null>(null);
   let selectedEntry = $state<any>(null);
   let paneError = $state("");
+
+  // ── Phone layout ───────────────────────────────────────────────────────────
+  // At phone width only one pane shows at a time: the list, or the entry
+  // (view/form) with a back button. The sidebar becomes a slide-out drawer.
+  // Each open layer (entry, drawer) gets a shallow history entry, so Android's
+  // back gesture closes it instead of leaving the app.
+  const PHONE_QUERY = "(max-width: 700px)";
+  let isPhone = $state(window.matchMedia(PHONE_QUERY).matches);
+  let drawerOpen = $state(false);
+  const showingDetail = $derived(paneMode !== "empty");
+
+  type PhoneLayer = "detail" | "drawer";
+  function currentLayer(): PhoneLayer | undefined {
+    return (page.state as { sp?: PhoneLayer }).sp;
+  }
+
+  function pushLayer(layer: PhoneLayer) {
+    if (isPhone && currentLayer() !== layer) pushState("", { sp: layer });
+  }
+
+  function openDrawer() {
+    drawerOpen = true;
+    pushLayer("drawer");
+  }
+
+  function closeDrawer() {
+    if (currentLayer() === "drawer") history.back();
+    else drawerOpen = false;
+  }
+
+  function closeDetail() {
+    paneMode = "empty";
+    selectedId = null;
+    selectedEntry = null;
+  }
+
+  // In-app back button. Editing goes back to the entry (like Cancel);
+  // otherwise back to the list, through history so it stays in step.
+  function phoneBack() {
+    if (paneMode === "edit") handleFormCancel();
+    else if (currentLayer() === "detail") history.back();
+    else closeDetail();
+  }
+
+  $effect(() => {
+    const mq = window.matchMedia(PHONE_QUERY);
+    const update = () => {
+      isPhone = mq.matches;
+      if (!isPhone) drawerOpen = false;
+    };
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  });
+
+  // History moved back (back gesture or history.back()): close whatever
+  // layer is no longer in the history state. Only page.state is tracked.
+  $effect(() => {
+    const layer = currentLayer();
+    untrack(() => {
+      if (layer !== "drawer" && drawerOpen) drawerOpen = false;
+      if (layer === undefined && isPhone && paneMode !== "empty") {
+        if ((paneMode === "edit" || paneMode === "new") && !confirmDiscard()) {
+          pushLayer("detail");
+          return;
+        }
+        closeDetail();
+      }
+    });
+  });
+
+  // The entry closed from inside (deleted, or a new entry cancelled): drop
+  // its history entry too. Only paneMode is tracked.
+  $effect(() => {
+    if (paneMode !== "empty") return;
+    untrack(() => {
+      if (isPhone && currentLayer() === "detail") history.back();
+    });
+  });
 
   // ── Modals / banners ───────────────────────────────────────────────────────
   let showSettings = $state(false);
@@ -165,11 +246,14 @@
     try {
       selectedEntry = await invoke<any>("get_entry", { request: { entryId: entry.id } });
       paneMode = "view";
+      pushLayer("detail");
     } catch (error) {
       console.error("Failed to load entry:", error);
       paneError = "Couldn't open that entry: " + (error instanceof Error ? error.message : String(error));
       selectedEntry = null;
       paneMode = "empty";
+      // The empty pane (where this error shows) is hidden on phones.
+      if (isPhone) showNotice("error", paneError);
     }
   }
 
@@ -181,6 +265,7 @@
     if ((paneMode === "edit" || paneMode === "new") && !confirmDiscard()) return;
     selectedEntry = null;
     paneMode = "new";
+    pushLayer("detail");
   }
 
   function handleEditEntry() {
@@ -193,7 +278,9 @@
 
   async function handleSaved(entryId: string) {
     await reloadData();
-    paneMode = "empty";
+    // "view", not "empty": skips selectEntry's discard prompt without
+    // closing the pane (on phones, "empty" would pop back to the list).
+    paneMode = "view";
     await selectEntry({ id: entryId });
     autoSync();
   }
@@ -408,7 +495,7 @@
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   function anyModalOpen() {
-    return showSettings || showConflictModal || showImportModal || showReauthModal;
+    return showSettings || showConflictModal || showImportModal || showReauthModal || drawerOpen;
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -451,7 +538,7 @@
   });
 </script>
 
-<div class="app">
+{#snippet sidebar()}
   <Sidebar
     bind:query={searchQuery}
     bind:selectedCategory
@@ -469,9 +556,66 @@
     onImport={handleImport}
     onExport={handleExport}
     onLock={onLock}
+    showSearch={!isPhone}
+    onNavigate={() => { if (isPhone) closeDrawer(); }}
   />
+{/snippet}
+
+{#snippet noticeBox()}
+  {#if notice}
+    <div class="notice msg {notice.kind === 'error' ? 'msg-error' : 'msg-success'}" role="status">
+      <span>{notice.text}</span>
+      <button class="icon-btn" onclick={() => (notice = null)} aria-label="Dismiss"><Icon name="close" size={14} /></button>
+    </div>
+  {/if}
+{/snippet}
+
+<div class="app" class:phone={isPhone} class:detail-open={showingDetail}>
+  {#if isPhone}
+    {#if drawerOpen}
+      <div class="drawer-backdrop" role="presentation" onclick={closeDrawer}></div>
+    {/if}
+    <div class="drawer" class:open={drawerOpen} inert={!drawerOpen}>
+      {@render sidebar()}
+    </div>
+  {:else}
+    {@render sidebar()}
+  {/if}
 
   <div class="main">
+    {#if isPhone}
+      <header class="topbar">
+        {#if showingDetail}
+          <button class="back-btn" onclick={phoneBack} aria-label={paneMode === "edit" ? "Back to entry" : "Back to list"}>
+            <Icon name="back" size={20} />
+            <span>{paneMode === "edit" ? "Entry" : heading}</span>
+          </button>
+        {:else}
+          <button class="icon-btn" onclick={openDrawer} aria-label="Open menu">
+            <Icon name="menu" size={20} />
+          </button>
+          <div class="topbar-search">
+            <Icon name="search" size={15} />
+            <label for="phone-search" class="sr-only">Search vault</label>
+            <input
+              id="phone-search"
+              type="search"
+              placeholder="Search vault"
+              autocomplete="off"
+              spellcheck="false"
+              bind:value={searchQuery}
+              bind:this={searchInput}
+            />
+            {#if searchQuery}
+              <button class="icon-btn clear" onclick={() => (searchQuery = "")} aria-label="Clear search">
+                <Icon name="close" size={14} />
+              </button>
+            {/if}
+          </div>
+        {/if}
+      </header>
+    {/if}
+
     {#if updateInfo}
       <div class="banner" role="status">
         <Icon name="sparkle" size={16} />
@@ -528,12 +672,13 @@
           </div>
         {/if}
 
-        {#if notice}
-          <div class="notice msg {notice.kind === 'error' ? 'msg-error' : 'msg-success'}" role="status">
-            <span>{notice.text}</span>
-            <button class="icon-btn" onclick={() => (notice = null)} aria-label="Dismiss"><Icon name="close" size={14} /></button>
-          </div>
-        {/if}
+        {#if !isPhone}{@render noticeBox()}{/if}
+      </section>
+    </div>
+
+    <!-- On phones the detail pane is hidden while the list shows, so the
+         notice lives outside it. -->
+    {#if isPhone}{@render noticeBox()}{/if}
 
         {#if toast}
           <div class="toast" role="status">
@@ -543,8 +688,6 @@
             <span class="toast-muted">clears in {toast.left}s</span>
           </div>
         {/if}
-      </section>
-    </div>
   </div>
 </div>
 
@@ -654,7 +797,7 @@
 {/if}
 
 <style>
-  .app { display: flex; height: 100vh; overflow: hidden; background: var(--bg); }
+  .app { display: flex; height: 100vh; height: 100dvh; overflow: hidden; background: var(--bg); }
 
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
@@ -704,5 +847,52 @@
   }
   .track { width: 60px; height: 3px; border-radius: 2px; background: var(--toast-track); overflow: hidden; }
   .track span { display: block; height: 100%; background: var(--toast-text); transition: width 1s linear; }
+  /* ── Phone layout ─────────────────────────────────────────────────────── */
+  .app.phone .main { padding-bottom: env(safe-area-inset-bottom); }
+
+  .topbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top)) 12px 8px 8px;
+    border-bottom: 1px solid var(--border-subtle); background: var(--bg);
+  }
+  .topbar .icon-btn { width: 44px; height: 44px; color: var(--text); }
+  .back-btn {
+    display: flex; align-items: center; gap: 2px; min-height: 44px; min-width: 0; padding: 0 8px 0 4px;
+    border: 0; border-radius: 8px; background: transparent; cursor: pointer;
+    color: var(--accent-text); font-size: 15px; font-weight: 500;
+  }
+  .back-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-search {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+    height: 42px; padding: 0 4px 0 12px;
+    border: 1px solid var(--border-strong); border-radius: 10px;
+    background: var(--surface); color: var(--text-muted);
+  }
+  .topbar-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+  .topbar-search input {
+    flex: 1; min-width: 0; border: 0; outline: none; background: transparent;
+    color: var(--text); font-size: 16px; /* 16px stops mobile browsers zooming on focus */
+  }
+  .topbar-search input::-webkit-search-cancel-button { display: none; }
+  .topbar-search input::placeholder { color: var(--text-muted); }
+  .topbar-search .clear { width: 34px; height: 34px; color: var(--text-muted); }
+
+  .app.phone .panes :global(.list-pane) { width: 100%; border-right: 0; }
+  .app.phone.detail-open .panes :global(.list-pane) { display: none; }
+  .app.phone:not(.detail-open) .detail { display: none; }
+
+  .drawer {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 800;
+    width: min(300px, 85vw);
+    transform: translateX(-100%); transition: transform 0.2s ease;
+    box-shadow: var(--shadow-lg);
+  }
+  .drawer.open { transform: none; }
+  .drawer-backdrop { position: fixed; inset: 0; z-index: 799; background: rgba(0, 0, 0, 0.4); }
+
+  .app.phone .notice { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); margin: 0; }
+  .app.phone .toast { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .app.phone .toast > span:nth-child(2) { flex: 1; }
+
   .toast-muted { color: var(--toast-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
 </style>
