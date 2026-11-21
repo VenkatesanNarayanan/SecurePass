@@ -50,6 +50,10 @@ jobs:
 
       - name: Install Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The default also installs "tools", which no longer exists in the
+          # SDK repository and fails the step.
+          packages: platform-tools
 
       - name: Install Android NDK
         run: |
