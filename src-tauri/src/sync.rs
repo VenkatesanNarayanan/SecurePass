@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+#[cfg(any(target_os = "android", target_os = "ios"))]
+use tauri::Manager;
 use uuid::Uuid;
 
 use crate::crypto::CryptoManager;
@@ -11,6 +13,29 @@ use crate::vault::{DeletedEntry, Entry, Vault};
 const CLIENT_ID: &str =
     "184164491921-ds7k9t99jfe0eq91siu14m8s7s501c5f.apps.googleusercontent.com";
 const CLIENT_SECRET: &str = "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";
+// Android OAuth client (public client — no secret, PKCE used instead). Not
+// kept in the repo: it is read at compile time from the
+// SECUREPASS_ANDROID_CLIENT_ID environment variable (a GitHub secret in CI,
+// see docs/ANDROID_RELEASE.md). Builds without it have no Drive sync on Android.
+const ANDROID_CLIENT_ID: Option<&str> = option_env!("SECUREPASS_ANDROID_CLIENT_ID");
+
+fn android_client_id() -> Result<&'static str, String> {
+    ANDROID_CLIENT_ID
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "Google Drive sync isn't available in this build (no Android OAuth client ID).".to_string())
+}
+
+// Google requires the reversed-client-ID form as the custom URI scheme for
+// "Android" OAuth clients — an app-chosen scheme (e.g. com.securepass.app://)
+// is rejected with "Custom URI scheme is not enabled for your Android client"
+// even after enabling that setting; only this exact derived form is accepted.
+// The same scheme must be in the deep-link config at build time (CI passes it
+// to `tauri android build --config`).
+#[cfg(mobile)]
+fn mobile_redirect_uri(client_id: &str) -> String {
+    let prefix = client_id.trim_end_matches(".apps.googleusercontent.com");
+    format!("com.googleusercontent.apps.{prefix}:/oauth2redirect")
+}
 const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -21,11 +46,20 @@ const OAUTH_TIMEOUT_SECS: u64 = 300; // 5 minutes
 
 // ── Persisted types ──────────────────────────────────────────────────────────
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+pub enum ClientKind {
+    #[default]
+    Desktop,
+    Android,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CloudTokens {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at: DateTime<Utc>,
+    #[serde(default)]
+    pub client_kind: ClientKind,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -52,47 +86,55 @@ pub struct MergeResult {
 
 // ── File paths ───────────────────────────────────────────────────────────────
 
-fn securepass_dir() -> PathBuf {
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn securepass_dir(_app: &tauri::AppHandle) -> PathBuf {
     dirs::home_dir()
         .expect("home dir")
         .join(".securepass")
 }
 
-fn tokens_path() -> PathBuf { securepass_dir().join("cloud_tokens.json") }
-fn sync_state_path() -> PathBuf { securepass_dir().join("sync_state.json") }
+// Android/iOS are sandboxed — there is no conventional home directory, so
+// use Tauri's app-data dir instead (correctly scoped per platform).
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn securepass_dir(app: &tauri::AppHandle) -> PathBuf {
+    app.path().app_data_dir().expect("app data dir")
+}
+
+fn tokens_path(app: &tauri::AppHandle) -> PathBuf { securepass_dir(app).join("cloud_tokens.json") }
+fn sync_state_path(app: &tauri::AppHandle) -> PathBuf { securepass_dir(app).join("sync_state.json") }
 
 // ── Token + state persistence ────────────────────────────────────────────────
 
-pub fn load_tokens() -> Option<CloudTokens> {
-    let data = std::fs::read_to_string(tokens_path()).ok()?;
+pub fn load_tokens(app: &tauri::AppHandle) -> Option<CloudTokens> {
+    let data = std::fs::read_to_string(tokens_path(app)).ok()?;
     serde_json::from_str(&data).ok()
 }
 
-fn save_tokens(tokens: &CloudTokens) -> Result<(), String> {
-    let dir = securepass_dir();
+fn save_tokens(app: &tauri::AppHandle, tokens: &CloudTokens) -> Result<(), String> {
+    let dir = securepass_dir(app);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let data = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
-    std::fs::write(tokens_path(), data).map_err(|e| e.to_string())?;
+    std::fs::write(tokens_path(app), data).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn load_sync_state() -> SyncState {
-    std::fs::read_to_string(sync_state_path())
+pub fn load_sync_state(app: &tauri::AppHandle) -> SyncState {
+    std::fs::read_to_string(sync_state_path(app))
         .ok()
         .and_then(|d| serde_json::from_str(&d).ok())
         .unwrap_or_default()
 }
 
-pub fn save_sync_state(state: &SyncState) -> Result<(), String> {
-    let dir = securepass_dir();
+pub fn save_sync_state(app: &tauri::AppHandle, state: &SyncState) -> Result<(), String> {
+    let dir = securepass_dir(app);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let data = serde_json::to_string(state).map_err(|e| e.to_string())?;
-    std::fs::write(sync_state_path(), data).map_err(|e| e.to_string())?;
+    std::fs::write(sync_state_path(app), data).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn clear_cloud_data() -> Result<(), String> {
-    for path in [tokens_path(), sync_state_path()] {
+pub fn clear_cloud_data(app: &tauri::AppHandle) -> Result<(), String> {
+    for path in [tokens_path(app), sync_state_path(app)] {
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
         }
@@ -160,27 +202,68 @@ fn parse_query_param(request: &str, param: &str) -> Option<String> {
     None
 }
 
-fn open_in_browser(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    std::process::Command::new("open").arg(url).spawn().map_err(|e| e.to_string())?;
-    #[cfg(target_os = "linux")]
-    std::process::Command::new("xdg-open").arg(url).spawn().map_err(|e| e.to_string())?;
-    // Note: `cmd /c start "" <url>` is unsafe here because cmd.exe treats
-    // unescaped `&` as a command separator, truncating query strings with
-    // multiple params (e.g. our OAuth URL) at the first `&`. rundll32 passes
-    // the URL straight to the DLL without cmd's command-line reparsing.
-    #[cfg(target_os = "windows")]
-    std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", url])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+#[cfg(mobile)]
+/// Extract a query parameter from a plain URL string (as delivered by a
+/// mobile deep link), as opposed to `parse_query_param` which parses a raw
+/// HTTP request line from the desktop loopback listener.
+fn parse_url_param(url: &str, param: &str) -> Option<String> {
+    let prefix = format!("{}=", param);
+    let q_start = url.find('?')?;
+    let query = &url[q_start + 1..];
+    for part in query.split('&') {
+        if let Some(raw) = part.strip_prefix(&prefix) {
+            return Some(url_decode(raw));
+        }
+    }
+    None
+}
+
+#[cfg(mobile)]
+/// PKCE `code_verifier`: a high-entropy random string (43-128 chars per RFC 7636).
+fn generate_pkce_verifier() -> String {
+    use rand::Rng;
+    rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(64)
+        .map(char::from)
+        .collect()
+}
+
+#[cfg(mobile)]
+/// PKCE `code_challenge`: base64url(sha256(code_verifier)), no padding.
+fn pkce_challenge(verifier: &str) -> String {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(verifier.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn open_in_browser(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    // On Android, the OAuth redirect back into the app depends on the browser
+    // correctly handing off our custom URI scheme — some OEM browsers (e.g.
+    // Samsung Internet) have been observed silently failing to do this at
+    // all, dropping the user onto an unrelated share/compose screen instead.
+    // Chrome handles it reliably, so force Chrome via an explicit
+    // `Intent.setPackage` (see chrome_opener.rs) regardless of the user's
+    // default browser, falling back to the default browser only if Chrome
+    // isn't installed.
+    #[cfg(target_os = "android")]
+    {
+        use crate::chrome_opener::ChromeOpenerExt;
+        if app.chrome_opener().open_in_chrome(url).is_ok() {
+            return Ok(());
+        }
+    }
+
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
 /// Start the OAuth 2.0 authorization code flow. Opens the user's browser,
 /// spins up a temporary local HTTP server to catch the redirect, exchanges
 /// the code for tokens, and persists them. Times out after 5 minutes.
-pub async fn start_oauth_flow() -> Result<CloudTokens, String> {
+pub async fn start_oauth_flow(app: &tauri::AppHandle) -> Result<CloudTokens, String> {
     use tokio::net::TcpListener;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::time::{timeout, Duration};
@@ -202,7 +285,7 @@ pub async fn start_oauth_flow() -> Result<CloudTokens, String> {
         state,
     );
 
-    open_in_browser(&auth_url)?;
+    open_in_browser(app, &auth_url)?;
 
     let (mut stream, _) = timeout(Duration::from_secs(OAUTH_TIMEOUT_SECS), listener.accept())
         .await
@@ -229,20 +312,98 @@ pub async fn start_oauth_flow() -> Result<CloudTokens, String> {
         </body></html>";
     stream.write_all(html.as_bytes()).await.ok();
 
-    let tokens = exchange_code_for_tokens(&code, &redirect_uri).await?;
-    save_tokens(&tokens)?;
+    let tokens = exchange_code_for_tokens(&code, &redirect_uri, CLIENT_ID, Some(CLIENT_SECRET), None, ClientKind::Desktop).await?;
+    save_tokens(app, &tokens)?;
     Ok(tokens)
 }
 
-async fn exchange_code_for_tokens(code: &str, redirect_uri: &str) -> Result<CloudTokens, String> {
+/// Start the OAuth 2.0 authorization code flow on Android/iOS using PKCE and a
+/// custom-URI-scheme redirect delivered back into the app via a deep link
+/// (there is no local-loopback-listener equivalent on mobile). Opens the
+/// system browser via the opener plugin, registers a channel in `AppState`
+/// that the deep-link handler in `lib.rs` fires once the redirect arrives,
+/// and awaits it with the same timeout as the desktop flow.
+#[cfg(mobile)]
+pub async fn start_oauth_flow_mobile(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Mutex<crate::commands::AppState>>,
+) -> Result<CloudTokens, String> {
+    use tokio::sync::oneshot;
+    use tokio::time::{timeout, Duration};
+
+    let client_id = android_client_id()?;
+    let redirect_uri = mobile_redirect_uri(client_id);
+    let verifier = generate_pkce_verifier();
+    let challenge = pkce_challenge(&verifier);
+    let oauth_state = random_state();
+
+    let auth_url = format!(
+        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&code_challenge={}&code_challenge_method=S256&access_type=offline&prompt=consent",
+        AUTH_URL,
+        url_encode(client_id),
+        url_encode(&redirect_uri),
+        url_encode(DRIVE_SCOPE),
+        oauth_state,
+        challenge,
+    );
+
+    let (tx, rx) = oneshot::channel::<String>();
+    {
+        let mut s = state.lock().map_err(|e| e.to_string())?;
+        s.pending_oauth_tx = Some(tx);
+    }
+
+    open_in_browser(&app, &auth_url)?;
+
+    let redirect_url = timeout(Duration::from_secs(OAUTH_TIMEOUT_SECS), rx)
+        .await
+        .map_err(|_| "OAuth timed out — please try again")?
+        .map_err(|_| "OAuth flow was cancelled")?;
+
+    let code = parse_url_param(&redirect_url, "code")
+        .ok_or("No authorization code in redirect")?;
+    let returned_state = parse_url_param(&redirect_url, "state")
+        .ok_or("No state parameter in redirect")?;
+
+    if returned_state != oauth_state {
+        return Err("OAuth state mismatch — possible CSRF, please try again".to_string());
+    }
+
+    let tokens = exchange_code_for_tokens(
+        &code,
+        &redirect_uri,
+        client_id,
+        None,
+        Some(&verifier),
+        ClientKind::Android,
+    ).await?;
+    save_tokens(&app, &tokens)?;
+    Ok(tokens)
+}
+
+/// Exchange an authorization `code` for tokens. `client_secret` is `None` for
+/// public clients (Android/iOS), which instead pass the PKCE `code_verifier`.
+async fn exchange_code_for_tokens(
+    code: &str,
+    redirect_uri: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+    code_verifier: Option<&str>,
+    client_kind: ClientKind,
+) -> Result<CloudTokens, String> {
     let client = reqwest::Client::new();
-    let params = [
+    let mut params = vec![
         ("code", code),
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
+        ("client_id", client_id),
         ("redirect_uri", redirect_uri),
         ("grant_type", "authorization_code"),
     ];
+    if let Some(secret) = client_secret {
+        params.push(("client_secret", secret));
+    }
+    if let Some(verifier) = code_verifier {
+        params.push(("code_verifier", verifier));
+    }
 
     let resp: serde_json::Value = client
         .post(TOKEN_URL)
@@ -254,17 +415,24 @@ async fn exchange_code_for_tokens(code: &str, redirect_uri: &str) -> Result<Clou
         .await
         .map_err(|e| format!("Failed to parse token response: {}", e))?;
 
-    tokens_from_json(&resp, None)
+    tokens_from_json(&resp, None, client_kind)
 }
 
-async fn refresh_access_token(refresh_token: &str) -> Result<CloudTokens, String> {
+async fn refresh_access_token(refresh_token: &str, client_kind: ClientKind) -> Result<CloudTokens, String> {
     let client = reqwest::Client::new();
-    let params = [
+    let mut params = vec![
         ("refresh_token", refresh_token),
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
         ("grant_type", "refresh_token"),
     ];
+    match client_kind {
+        ClientKind::Desktop => {
+            params.push(("client_id", CLIENT_ID));
+            params.push(("client_secret", CLIENT_SECRET));
+        }
+        ClientKind::Android => {
+            params.push(("client_id", android_client_id()?));
+        }
+    }
 
     let resp: serde_json::Value = client
         .post(TOKEN_URL)
@@ -276,10 +444,10 @@ async fn refresh_access_token(refresh_token: &str) -> Result<CloudTokens, String
         .await
         .map_err(|e| format!("Failed to parse refresh response: {}", e))?;
 
-    tokens_from_json(&resp, Some(refresh_token))
+    tokens_from_json(&resp, Some(refresh_token), client_kind)
 }
 
-fn tokens_from_json(json: &serde_json::Value, fallback_refresh: Option<&str>) -> Result<CloudTokens, String> {
+fn tokens_from_json(json: &serde_json::Value, fallback_refresh: Option<&str>, client_kind: ClientKind) -> Result<CloudTokens, String> {
     let access_token = json["access_token"]
         .as_str()
         .ok_or("No access_token in response")?
@@ -295,19 +463,20 @@ fn tokens_from_json(json: &serde_json::Value, fallback_refresh: Option<&str>) ->
         access_token,
         refresh_token,
         expires_at: Utc::now() + chrono::Duration::seconds(expires_in),
+        client_kind,
     })
 }
 
 /// Returns a valid access token, refreshing if needed.
-pub async fn get_valid_access_token() -> Result<String, String> {
-    let tokens = load_tokens().ok_or("Not connected to Google Drive. Please connect in Settings.")?;
+pub async fn get_valid_access_token(app: &tauri::AppHandle) -> Result<String, String> {
+    let tokens = load_tokens(app).ok_or("Not connected to Google Drive. Please connect in Settings.")?;
 
     if tokens.expires_at > Utc::now() + chrono::Duration::seconds(60) {
         return Ok(tokens.access_token);
     }
 
-    let refreshed = refresh_access_token(&tokens.refresh_token).await?;
-    save_tokens(&refreshed)?;
+    let refreshed = refresh_access_token(&tokens.refresh_token, tokens.client_kind).await?;
+    save_tokens(app, &refreshed)?;
     Ok(refreshed.access_token)
 }
 

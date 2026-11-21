@@ -21,6 +21,11 @@ pub struct AppState {
     pub pending_conflicts: Vec<(Entry, Entry)>,
     /// Drive file ID kept here during conflict resolution so we can finalize the upload.
     pub pending_drive_file_id: Option<String>,
+    /// Waiting sender for the OAuth redirect URL delivered via a mobile deep link.
+    /// Set while a mobile OAuth flow is in progress; taken and fired by the
+    /// deep-link handler registered in `lib.rs`'s `.setup()`.
+    #[cfg_attr(desktop, allow(dead_code))]
+    pub pending_oauth_tx: Option<tokio::sync::oneshot::Sender<String>>,
 }
 
 impl Default for AppState {
@@ -32,6 +37,7 @@ impl Default for AppState {
             pending_sync_merge: None,
             pending_conflicts: Vec::new(),
             pending_drive_file_id: None,
+            pending_oauth_tx: None,
         }
     }
 }
@@ -93,15 +99,24 @@ pub struct GetEntryRequest {
 }
 
 /// Get the vault file path
-fn get_vault_path() -> PathBuf {
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn get_vault_path(_app: &tauri::AppHandle) -> PathBuf {
     dirs::home_dir()
         .expect("Could not find home directory")
         .join(".securepass")
         .join("vault.dat")
 }
 
+// Android/iOS are sandboxed — there is no conventional home directory, so
+// use Tauri's app-data dir instead (correctly scoped per platform).
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn get_vault_path(app: &tauri::AppHandle) -> PathBuf {
+    use tauri::Manager;
+    app.path().app_data_dir().expect("app data dir").join("vault.dat")
+}
+
 /// Save vault to encrypted file
-fn save_vault(vault: &Vault, crypto: &CryptoManager) -> Result<(), String> {
+fn save_vault(app: &tauri::AppHandle, vault: &Vault, crypto: &CryptoManager) -> Result<(), String> {
     let json = serde_json::to_string(vault).map_err(|e| e.to_string())?;
     let plaintext = json.as_bytes();
     let nonce = CryptoManager::generate_nonce();
@@ -112,15 +127,15 @@ fn save_vault(vault: &Vault, crypto: &CryptoManager) -> Result<(), String> {
     data.extend(nonce.to_vec());
     data.extend(ciphertext);
 
-    let path = get_vault_path();
+    let path = get_vault_path(app);
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     fs::write(&path, data).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Load vault from encrypted file
-fn load_vault(master_password: &str) -> Result<Vault, String> {
-    let path = get_vault_path();
+fn load_vault(app: &tauri::AppHandle, master_password: &str) -> Result<Vault, String> {
+    let path = get_vault_path(app);
     if !path.exists() {
         return Err("Vault not found".to_string());
     }
@@ -161,6 +176,7 @@ fn parse_field_type(field_type: &str) -> Result<FieldType, String> {
 
 #[command]
 pub async fn create_vault(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     request: CreateVaultRequest,
 ) -> Result<VaultMetadata, String> {
@@ -181,7 +197,7 @@ pub async fn create_vault(
     vault.add_entry(test_entry);
 
     // Save vault to file
-    save_vault(&vault, &crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
+    save_vault(&app, &vault, &crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
 
     // Update state
     state.vault = Some(vault);
@@ -194,6 +210,7 @@ pub async fn create_vault(
 
 #[command]
 pub async fn unlock_vault(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     request: UnlockVaultRequest,
 ) -> Result<VaultMetadata, String> {
@@ -201,7 +218,7 @@ pub async fn unlock_vault(
 
     if state.vault.is_none() {
         // Try to load vault from file
-        let vault = load_vault(&request.master_password)?;
+        let vault = load_vault(&app, &request.master_password)?;
         state.vault = Some(vault);
     }
 
@@ -237,11 +254,11 @@ pub async fn lock_vault(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), 
 }
 
 #[command]
-pub async fn get_vault_status(state: tauri::State<'_, Mutex<AppState>>) -> Result<serde_json::Value, String> {
+pub async fn get_vault_status(app: tauri::AppHandle, state: tauri::State<'_, Mutex<AppState>>) -> Result<serde_json::Value, String> {
     let state = state.lock().map_err(|e| format!("State lock error: {}", e))?;
 
     // Check if vault file exists on disk
-    let vault_file_exists = get_vault_path().exists();
+    let vault_file_exists = get_vault_path(&app).exists();
 
     let status = serde_json::json!({
         "is_locked": state.is_locked,
@@ -254,6 +271,7 @@ pub async fn get_vault_status(state: tauri::State<'_, Mutex<AppState>>) -> Resul
 
 #[command]
 pub async fn create_entry(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     request: CreateEntryRequest,
 ) -> Result<String, String> {
@@ -286,7 +304,7 @@ pub async fn create_entry(
     {
         let crypto = state.crypto.as_ref().unwrap();
         let vault = state.vault.as_ref().unwrap();
-        save_vault(vault, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
+        save_vault(&app, vault, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
     }
 
     Ok(entry_id)
@@ -431,6 +449,7 @@ pub async fn get_categories(state: tauri::State<'_, Mutex<AppState>>) -> Result<
 
 #[command]
 pub async fn update_entry(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     request: UpdateEntryRequest,
 ) -> Result<(), String> {
@@ -477,7 +496,7 @@ pub async fn update_entry(
     {
         let crypto = state.crypto.as_ref().unwrap();
         let vault = state.vault.as_ref().unwrap();
-        save_vault(vault, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
+        save_vault(&app, vault, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
     }
 
     Ok(())
@@ -485,6 +504,7 @@ pub async fn update_entry(
 
 #[command]
 pub async fn delete_entry(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     request: GetEntryRequest,
 ) -> Result<(), String> {
@@ -508,7 +528,7 @@ pub async fn delete_entry(
     {
         let crypto = state.crypto.as_ref().unwrap();
         let vault = state.vault.as_ref().unwrap();
-        save_vault(vault, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
+        save_vault(&app, vault, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
     }
 
     Ok(())
@@ -527,61 +547,15 @@ pub async fn get_tags(state: tauri::State<'_, Mutex<AppState>>) -> Result<Vec<St
 }
 
 #[command]
-pub async fn copy_to_clipboard(text: String) -> Result<(), String> {
-    use std::process::Command;
-
-    // Use system clipboard commands
-    #[cfg(target_os = "macos")]
-    {
-        let mut child = Command::new("pbcopy")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("Failed to spawn pbcopy: {}", e))?;
-
-        use std::io::Write;
-        child.stdin.as_mut().unwrap().write_all(text.as_bytes())
-            .map_err(|e| format!("Failed to write to clipboard: {}", e))?;
-
-        child.wait().map_err(|e| format!("Failed to wait for pbcopy: {}", e))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let mut child = Command::new("xclip")
-            .arg("-selection")
-            .arg("clipboard")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("Failed to spawn xclip: {}", e))?;
-
-        use std::io::Write;
-        child.stdin.as_mut().unwrap().write_all(text.as_bytes())
-            .map_err(|e| format!("Failed to write to clipboard: {}", e))?;
-
-        child.wait().map_err(|e| format!("Failed to wait for xclip: {}", e))?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut child = Command::new("clip")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("Failed to spawn clip: {}", e))?;
-
-        use std::io::Write;
-        child.stdin.as_mut().unwrap().write_all(text.as_bytes())
-            .map_err(|e| format!("Failed to write to clipboard: {}", e))?;
-
-        child.wait().map_err(|e| format!("Failed to wait for clip: {}", e))?;
-    }
-
-    Ok(())
+pub async fn copy_to_clipboard(app: tauri::AppHandle, text: String) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
 
 #[command]
-pub async fn clear_clipboard() -> Result<(), String> {
+pub async fn clear_clipboard(app: tauri::AppHandle) -> Result<(), String> {
     // Copy empty string to clear clipboard
-    copy_to_clipboard("".to_string()).await
+    copy_to_clipboard(app, "".to_string()).await
 }
 
 #[derive(Serialize, Deserialize)]
@@ -659,6 +633,7 @@ pub struct ImportVaultResult {
 
 #[command]
 pub async fn import_vault(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     request: ImportVaultRequest,
 ) -> Result<ImportVaultResult, String> {
@@ -690,7 +665,7 @@ pub async fn import_vault(
     merged.updated_at = chrono::Utc::now();
 
     // Persist merged vault to disk
-    save_vault(&merged, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
+    save_vault(&app, &merged, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
 
     state.vault = Some(merged);
 
@@ -764,6 +739,7 @@ pub struct ImportFromPasswordLockerRequest {
 
 #[command]
 pub async fn import_from_password_locker(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     request: ImportFromPasswordLockerRequest,
 ) -> Result<usize, String> {
@@ -800,7 +776,7 @@ pub async fn import_from_password_locker(
     {
         let crypto = state.crypto.as_ref().unwrap();
         let vault = state.vault.as_ref().unwrap();
-        save_vault(vault, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
+        save_vault(&app, vault, crypto).map_err(|e| format!("Failed to save vault: {}", e))?;
     }
 
     Ok(count)
@@ -864,13 +840,14 @@ fn entry_to_json(entry: &Entry) -> serde_json::Value {
 /// Return the current Google Drive connection status.
 #[command]
 pub async fn get_sync_status(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<SyncStatusResponse, String> {
     let has_pending = {
         let s = state.lock().map_err(|e| e.to_string())?;
         !s.pending_conflicts.is_empty()
     };
-    let sync_state = sync::load_sync_state();
+    let sync_state = sync::load_sync_state(&app);
     Ok(SyncStatusResponse {
         connected: sync_state.connected,
         last_sync: sync_state.last_sync,
@@ -880,23 +857,44 @@ pub async fn get_sync_status(
 
 /// Start the Google Drive OAuth flow. Opens the user's browser; blocks until
 /// they complete sign-in (timeout 5 min).
+///
+/// Desktop uses a local-loopback redirect listener; Android/iOS use PKCE
+/// with a custom-URI-scheme redirect delivered via a deep link instead (see
+/// `sync::start_oauth_flow_mobile`), since there is no loopback-listener
+/// equivalent on mobile.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[command]
 pub async fn connect_google_drive(
+    app: tauri::AppHandle,
     _state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
-    sync::start_oauth_flow().await?;
-    let mut sync_state = sync::load_sync_state();
+    sync::start_oauth_flow(&app).await?;
+    let mut sync_state = sync::load_sync_state(&app);
     sync_state.connected = true;
-    sync::save_sync_state(&sync_state)?;
+    sync::save_sync_state(&app, &sync_state)?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[command]
+pub async fn connect_google_drive(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    sync::start_oauth_flow_mobile(app.clone(), state).await?;
+    let mut sync_state = sync::load_sync_state(&app);
+    sync_state.connected = true;
+    sync::save_sync_state(&app, &sync_state)?;
     Ok(())
 }
 
 /// Remove stored tokens and disconnect from Google Drive.
 #[command]
 pub async fn disconnect_google_drive(
+    app: tauri::AppHandle,
     _state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
-    sync::clear_cloud_data()
+    sync::clear_cloud_data(&app)
 }
 
 /// Sync the local vault with Google Drive.
@@ -906,6 +904,7 @@ pub async fn disconnect_google_drive(
 /// to resolve via `resolve_conflicts`.
 #[command]
 pub async fn sync_vault(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<SyncResult, String> {
     // Extract what we need from locked state, then release the lock before
@@ -915,7 +914,7 @@ pub async fn sync_vault(
         if s.is_locked || s.vault.is_none() {
             return Err("Vault is locked".to_string());
         }
-        let sync_state = sync::load_sync_state();
+        let sync_state = sync::load_sync_state(&app);
         if !sync_state.connected {
             return Err("Not connected to Google Drive. Connect in Settings first.".to_string());
         }
@@ -927,7 +926,7 @@ pub async fn sync_vault(
     };
 
     let crypto = CryptoManager::from_key_bytes(&key_bytes);
-    let access_token = sync::get_valid_access_token().await?;
+    let access_token = sync::get_valid_access_token(&app).await?;
     let file_id = sync::find_drive_file(&access_token).await?;
 
     // ── First sync: nothing on Drive yet ────────────────────────────────────
@@ -938,7 +937,7 @@ pub async fn sync_vault(
         let mut new_state = sync_state;
         new_state.drive_file_id = Some(new_id);
         new_state.last_sync = Some(Utc::now());
-        sync::save_sync_state(&new_state)?;
+        sync::save_sync_state(&app, &new_state)?;
 
         return Ok(SyncResult {
             status: "synced".to_string(),
@@ -983,7 +982,7 @@ pub async fn sync_vault(
 
         {
             let mut s = state.lock().map_err(|e| e.to_string())?;
-            save_vault(&merged_vault, s.crypto.as_ref().unwrap())
+            save_vault(&app, &merged_vault, s.crypto.as_ref().unwrap())
                 .map_err(|e| format!("Failed to save merged vault: {}", e))?;
             s.vault = Some(merged_vault);
         }
@@ -991,7 +990,7 @@ pub async fn sync_vault(
         let mut new_state = sync_state;
         new_state.drive_file_id = Some(file_id);
         new_state.last_sync = Some(Utc::now());
-        sync::save_sync_state(&new_state)?;
+        sync::save_sync_state(&app, &new_state)?;
 
         Ok(SyncResult { status: "synced".to_string(), conflicts: vec![], entries_added: added, entries_updated: updated })
     } else {
@@ -1028,6 +1027,7 @@ pub async fn sync_vault(
 /// the new key, and updates AppState — so both devices share the same key.
 #[command]
 pub async fn reauth_and_sync(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     new_master_password: String,
 ) -> Result<SyncResult, String> {
@@ -1041,14 +1041,14 @@ pub async fn reauth_and_sync(
         if s.is_locked || s.vault.is_none() {
             return Err("Vault is locked".to_string());
         }
-        let ss = sync::load_sync_state();
+        let ss = sync::load_sync_state(&app);
         if !ss.connected {
             return Err("Not connected to Google Drive".to_string());
         }
         (s.vault.as_ref().unwrap().clone(), ss)
     };
 
-    let access_token = sync::get_valid_access_token().await?;
+    let access_token = sync::get_valid_access_token(&app).await?;
     let file_id = sync::find_drive_file(&access_token)
         .await?
         .ok_or("No SecurePass vault found on Google Drive")?;
@@ -1080,7 +1080,7 @@ pub async fn reauth_and_sync(
     merged.updated_at = Utc::now();
 
     if merge.raw_conflicts.is_empty() {
-        save_vault(&merged, &new_crypto)
+        save_vault(&app, &merged, &new_crypto)
             .map_err(|e| format!("Failed to save vault: {}", e))?;
 
         let vault_bytes = sync::encrypt_vault_bytes(&merged, &new_crypto)?;
@@ -1099,7 +1099,7 @@ pub async fn reauth_and_sync(
         let mut new_state = sync_state;
         new_state.drive_file_id = Some(file_id);
         new_state.last_sync = Some(Utc::now());
-        sync::save_sync_state(&new_state)?;
+        sync::save_sync_state(&app, &new_state)?;
 
         Ok(SyncResult {
             status: "synced".to_string(),
@@ -1145,6 +1145,7 @@ pub async fn reauth_and_sync(
 /// (if Google Drive is connected) re-uploads so other devices stay in sync.
 #[command]
 pub async fn change_master_password(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     current_password: String,
     new_password: String,
@@ -1179,12 +1180,12 @@ pub async fn change_master_password(
         vault.salt = new_salt;
         vault.updated_at = Utc::now();
 
-        save_vault(vault, &new_crypto)
+        save_vault(&app, vault, &new_crypto)
             .map_err(|e| format!("Failed to save vault: {}", e))?;
 
         let new_key_bytes = new_crypto.get_key_bytes();
         let snapshot = vault.clone();
-        let connected = sync::load_sync_state().connected;
+        let connected = sync::load_sync_state(&app).connected;
 
         s.crypto = Some(new_crypto);
 
@@ -1194,14 +1195,14 @@ pub async fn change_master_password(
     // Phase 2: re-upload to Drive outside the lock (async).
     if sync_connected {
         let crypto = CryptoManager::from_key_bytes(&new_key_bytes);
-        if let Ok(token) = sync::get_valid_access_token().await {
+        if let Ok(token) = sync::get_valid_access_token(&app).await {
             if let Ok(file_id) = sync::find_drive_file(&token).await {
                 if let Ok(bytes) = sync::encrypt_vault_bytes(&vault_snapshot, &crypto) {
                     if let Ok(new_id) = sync::upload_vault_to_drive(&token, bytes, file_id.as_deref()).await {
-                        let mut ss = sync::load_sync_state();
+                        let mut ss = sync::load_sync_state(&app);
                         ss.drive_file_id = Some(new_id);
                         ss.last_sync = Some(Utc::now());
-                        let _ = sync::save_sync_state(&ss);
+                        let _ = sync::save_sync_state(&app, &ss);
                     }
                 }
             }
@@ -1218,6 +1219,7 @@ pub async fn change_master_password(
 /// against `last_sync`. Returns immediately (one lightweight Drive metadata call).
 #[command]
 pub async fn check_sync_needed(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<serde_json::Value, String> {
     let (vault_updated_at, sync_state) = {
@@ -1225,7 +1227,7 @@ pub async fn check_sync_needed(
         if s.is_locked || s.vault.is_none() {
             return Err("Vault is locked".to_string());
         }
-        let ss = sync::load_sync_state();
+        let ss = sync::load_sync_state(&app);
         if !ss.connected {
             return Ok(serde_json::json!({ "needsSync": false, "localChanged": false, "remoteChanged": false }));
         }
@@ -1240,7 +1242,7 @@ pub async fn check_sync_needed(
         return Ok(serde_json::json!({ "needsSync": true, "localChanged": true, "remoteChanged": false }));
     };
 
-    let access_token = sync::get_valid_access_token().await?;
+    let access_token = sync::get_valid_access_token(&app).await?;
     let remote_modified = sync::get_drive_file_modified_time(&access_token, &file_id).await?;
     let remote_changed = remote_modified.map(|t| t > last_sync).unwrap_or(false);
 
@@ -1256,6 +1258,7 @@ pub async fn check_sync_needed(
 /// Each resolution specifies an `entryId` and `keep: "local" | "remote"`.
 #[command]
 pub async fn resolve_conflicts(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     resolutions: Vec<ConflictResolution>,
 ) -> Result<(), String> {
@@ -1286,20 +1289,20 @@ pub async fn resolve_conflicts(
 
     let crypto = CryptoManager::from_key_bytes(&key_bytes);
     let vault_bytes = sync::encrypt_vault_bytes(&merged, &crypto)?;
-    let access_token = sync::get_valid_access_token().await?;
+    let access_token = sync::get_valid_access_token(&app).await?;
     sync::upload_vault_to_drive(&access_token, vault_bytes, Some(&drive_file_id)).await?;
 
     {
         let mut s = state.lock().map_err(|e| e.to_string())?;
-        save_vault(&merged, s.crypto.as_ref().unwrap())
+        save_vault(&app, &merged, s.crypto.as_ref().unwrap())
             .map_err(|e| format!("Failed to save vault: {}", e))?;
         s.vault = Some(merged);
     }
 
-    let mut sync_state = sync::load_sync_state();
+    let mut sync_state = sync::load_sync_state(&app);
     sync_state.drive_file_id = Some(drive_file_id);
     sync_state.last_sync = Some(Utc::now());
-    sync::save_sync_state(&sync_state)?;
+    sync::save_sync_state(&app, &sync_state)?;
 
     Ok(())
 }
@@ -1313,11 +1316,12 @@ pub async fn resolve_conflicts(
 /// locally, and marks the sync state as up-to-date.
 #[command]
 pub async fn restore_vault_from_drive(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppState>>,
     master_password: String,
 ) -> Result<VaultMetadata, String> {
     // Tokens must have been stored by connect_google_drive already.
-    let access_token = sync::get_valid_access_token().await?;
+    let access_token = sync::get_valid_access_token(&app).await?;
 
     let file_id = sync::find_drive_file(&access_token)
         .await?
@@ -1343,14 +1347,14 @@ pub async fn restore_vault_from_drive(
     let vault = sync::decrypt_vault_bytes(&vault_bytes, &crypto)
         .map_err(|_| "Incorrect master password or corrupted vault file.".to_string())?;
 
-    save_vault(&vault, &crypto)
+    save_vault(&app, &vault, &crypto)
         .map_err(|e| format!("Failed to save vault locally: {}", e))?;
 
-    let mut sync_state = sync::load_sync_state();
+    let mut sync_state = sync::load_sync_state(&app);
     sync_state.connected = true;
     sync_state.drive_file_id = Some(file_id);
     sync_state.last_sync = Some(Utc::now());
-    sync::save_sync_state(&sync_state)?;
+    sync::save_sync_state(&app, &sync_state)?;
 
     let metadata = VaultMetadata::from(&vault);
     {

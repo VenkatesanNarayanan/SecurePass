@@ -9,3 +9,7 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 client_secret_*.json
+
+# Android build outputs
+*.apk
+.kotlin/

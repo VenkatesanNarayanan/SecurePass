@@ -67,6 +67,27 @@
     if (isUnlocked) startAutoLockTimer();
   }
 
+  // Android may throttle/suspend the setTimeout above while the WebView is
+  // backgrounded, so it can't be trusted to fire on schedule. Record a
+  // wall-clock timestamp on backgrounding and check elapsed real time on
+  // resume instead of relying on the timer alone.
+  const BACKGROUNDED_AT_KEY = "sp_backgrounded_at";
+
+  function handleVisibilityChange() {
+    if (!isUnlocked) return;
+    if (document.hidden) {
+      localStorage.setItem(BACKGROUNDED_AT_KEY, String(Date.now()));
+    } else {
+      const backgroundedAt = Number(localStorage.getItem(BACKGROUNDED_AT_KEY) || 0);
+      localStorage.removeItem(BACKGROUNDED_AT_KEY);
+      if (backgroundedAt && Date.now() - backgroundedAt >= getAutoLockTimeout()) {
+        handleLock();
+      } else {
+        startAutoLockTimer();
+      }
+    }
+  }
+
   // Initialize
   checkVaultStatus();
 
@@ -79,6 +100,7 @@
     window.addEventListener("keydown", handleUserActivity);
     window.addEventListener("scroll", handleUserActivity, true);
     window.addEventListener("touchstart", handleUserActivity);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
   }
 
   function cleanupAutoLock() {
@@ -87,6 +109,8 @@
     window.removeEventListener("keydown", handleUserActivity);
     window.removeEventListener("scroll", handleUserActivity, true);
     window.removeEventListener("touchstart", handleUserActivity);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    localStorage.removeItem(BACKGROUNDED_AT_KEY);
     clearAutoLockTimer();
   }
 </script>

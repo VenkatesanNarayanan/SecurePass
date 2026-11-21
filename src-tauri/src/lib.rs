@@ -4,15 +4,20 @@ mod crypto;
 mod vault;
 mod commands;
 mod sync;
+#[cfg(target_os = "android")]
+mod chrome_opener;
 
 use std::sync::Mutex;
 use commands::AppState;
-use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::Manager;
+#[cfg(desktop)]
+use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
 
 /// Shrinks the window to fit the monitor's work area (the screen minus the
 /// taskbar/dock, wherever it is docked) and centres it there. Tauri's own
 /// `center` uses the full monitor, which puts the title bar under a top
 /// taskbar, and a fixed 800 px height can overflow small or scaled screens.
+#[cfg(desktop)]
 fn fit_to_work_area(window: &WebviewWindow) -> tauri::Result<()> {
     let monitor = match window.current_monitor()? {
         Some(m) => m,
@@ -46,19 +51,46 @@ fn fit_to_work_area(window: &WebviewWindow) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_deep_link::init());
+
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(chrome_opener::init());
+
+    builder
         .manage(Mutex::new(AppState::default()))
         .setup(|app| {
-            // The window is created hidden (tauri.conf.json) so it appears
-            // already in place instead of jumping after it is moved.
+            // The window is created hidden (tauri.conf.json) so on desktop it
+            // appears already in place instead of jumping after it is moved.
+            // Mobile has no monitor work area to fit, but still needs show().
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(desktop)]
                 if let Err(e) = fit_to_work_area(&window) {
                     eprintln!("Could not fit window to the work area: {e}");
                 }
                 window.show()?;
+                #[cfg(desktop)]
                 window.set_focus()?;
+            }
+
+            // Mobile OAuth redirects arrive as a deep link (there's no local-loopback
+            // listener like on desktop); forward the URL into whichever
+            // `pending_oauth_tx` is currently awaiting it in AppState.
+            #[cfg(mobile)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    let Some(url) = event.urls().into_iter().next() else { return };
+                    let state = handle.state::<Mutex<AppState>>();
+                    let Ok(mut guard) = state.lock() else { return };
+                    if let Some(tx) = guard.pending_oauth_tx.take() {
+                        let _ = tx.send(url.to_string());
+                    }
+                });
             }
             Ok(())
         })

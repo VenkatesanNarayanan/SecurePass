@@ -64,5 +64,9 @@
       "appimage": {}
     }
   },
-  "plugins": {}
+  "plugins": {
+    "deep-link": {
+      "mobile": []
+    }
+  }
 }

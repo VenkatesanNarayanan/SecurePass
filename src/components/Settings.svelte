@@ -160,6 +160,8 @@
         await loadSyncStatus();
       } else if (result.status === "conflicts") {
         cloudError = `${result.conflicts.length} conflict(s) need your attention. Close Settings and choose "Resolve conflicts" in the sidebar.`;
+      } else if (result.status === "password_changed") {
+        cloudError = `Your master password was changed on another device. Close Settings and choose "Sync now" in the sidebar to enter the new password.`;
       }
     } catch (e) {
       cloudError = e instanceof Error ? e.message : String(e);
