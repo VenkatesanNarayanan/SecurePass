@@ -3,6 +3,7 @@
   import { createEventDispatcher } from "svelte";
   import Icon from "./Icon.svelte";
   import { passwordStrength } from "$lib/strength";
+  import { biometricText, type BiometricKind, type BiometricStatus } from "$lib/biometric";
 
   const dispatch = createEventDispatcher();
 
@@ -24,18 +25,21 @@
 
   const strength = $derived(passwordStrength(masterPassword));
 
-  // ── Fingerprint unlock (Android; see src-tauri/src/biometric.rs) ─────────
+  // ── Biometric unlock (Android fingerprint / Windows Hello) ──────────────
   let bioEnabled = $state(false);
   let bioBusy = $state(false);
   let bioNote = $state("");
-  // The periodic master-password check is due: hide the fingerprint button.
+  // The periodic master-password check is due: hide the biometric button.
   let bioPasswordDue = $state(false);
   let passwordIntervalDays = $state(7);
+  let bioKind = $state<BiometricKind>("fingerprint");
+  const bioText = $derived(biometricText(bioKind, passwordIntervalDays));
 
   async function checkBiometric() {
     try {
-      const s = await invoke<{ available: boolean; enabled: boolean; passwordIntervalDays: number }>("biometric_status");
+      const s = await invoke<BiometricStatus>("biometric_status");
       bioEnabled = s.enabled;
+      bioKind = s.kind;
       passwordIntervalDays = s.passwordIntervalDays;
     } catch {
       bioEnabled = false;
@@ -56,7 +60,7 @@
         // Dismissed: just leave the password field.
       } else if (msg === "biometric:password_required") {
         bioPasswordDue = true;
-        bioNote = `For your security, enter your master password. It's needed at least every ${passwordIntervalDays} days, even with fingerprint unlock.`;
+        bioNote = `For your security, enter your master password. It's needed at least every ${passwordIntervalDays} days, even with ${bioKind === "windowsHello" ? "Windows Hello" : "fingerprint"} unlock.`;
       } else {
         error = msg;
         await checkBiometric(); // it may have been turned off (invalidated)
@@ -72,7 +76,7 @@
       vaultExists = status.has_vault;
       if (vaultExists) {
         await checkBiometric();
-        // Offer the fingerprint straight away when it's set up.
+        // Offer biometric unlock straight away when it's set up.
         if (bioEnabled) unlockWithFingerprint();
       }
     } catch (err) {
@@ -326,7 +330,7 @@
 
         {#if vaultExists && bioEnabled && !bioPasswordDue}
           <button type="button" class="btn btn-secondary btn-lg" onclick={unlockWithFingerprint} disabled={loading || bioBusy}>
-            {#if bioBusy}<span class="spinner"></span> Waiting for fingerprint…{:else}<Icon name="fingerprint" size={18} /> Unlock with fingerprint{/if}
+            {#if bioBusy}<span class="spinner"></span> {bioText.waiting}{:else}<Icon name={bioText.icon} size={18} /> {bioText.unlockButton}{/if}
           </button>
         {/if}
 

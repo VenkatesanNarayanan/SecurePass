@@ -100,7 +100,7 @@ pub struct GetEntryRequest {
 
 /// Get the vault file path
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn get_vault_path(_app: &tauri::AppHandle) -> PathBuf {
+pub(crate) fn get_vault_path(_app: &tauri::AppHandle) -> PathBuf {
     dirs::home_dir()
         .expect("Could not find home directory")
         .join(".securepass")
@@ -110,7 +110,7 @@ fn get_vault_path(_app: &tauri::AppHandle) -> PathBuf {
 // Android/iOS are sandboxed — there is no conventional home directory, so
 // use Tauri's app-data dir instead (correctly scoped per platform).
 #[cfg(any(target_os = "android", target_os = "ios"))]
-fn get_vault_path(app: &tauri::AppHandle) -> PathBuf {
+pub(crate) fn get_vault_path(app: &tauri::AppHandle) -> PathBuf {
     use tauri::Manager;
     app.path().app_data_dir().expect("app data dir").join("vault.dat")
 }
@@ -260,7 +260,7 @@ pub async fn unlock_vault(
     Ok(metadata)
 }
 
-// ── Fingerprint unlock (Android; see biometric.rs) ───────────────────────────
+// ── Biometric unlock (Android fingerprint, Windows Hello; see biometric.rs) ──
 
 /// Errors the unlock screen handles itself rather than showing as text.
 const BIOMETRIC_CANCELLED: &str = "biometric:cancelled";
@@ -272,18 +272,24 @@ pub struct EnableBiometricRequest {
     pub master_password: String,
 }
 
-/// `available`: this device can do fingerprint unlock; `enabled`: it is set up.
+/// `available`: this device can do biometric unlock; `enabled`: it is set up;
+/// `kind`: "fingerprint" (Android) or "windowsHello", for the UI's wording.
 #[command]
 pub async fn biometric_status(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let available = crate::biometric::is_available(&app);
+    // Windows Hello's availability check is a blocking WinRT call.
+    let handle = app.clone();
+    let available = tauri::async_runtime::spawn_blocking(move || crate::biometric::is_available(&handle))
+        .await
+        .unwrap_or(false);
     Ok(serde_json::json!({
         "available": available,
+        "kind": crate::biometric::kind(),
         "enabled": available && crate::biometric::is_enrolled(&app),
         "passwordIntervalDays": crate::biometric::PASSWORD_INTERVAL_SECS / 86_400,
     }))
 }
 
-/// Turn on fingerprint unlock. The vault must be unlocked, and the master
+/// Turn on biometric unlock. The vault must be unlocked, and the master
 /// password is asked again so an unlocked, unattended phone can't be used
 /// to enrol someone else's fingerprint without it.
 #[command]
@@ -321,7 +327,7 @@ pub async fn disable_biometric_unlock(app: tauri::AppHandle) -> Result<(), Strin
     Ok(())
 }
 
-/// Unlock with a fingerprint. Errors are user-facing messages, except
+/// Unlock with a fingerprint / Windows Hello. Errors are user-facing messages, except
 /// `biometric:cancelled` (prompt dismissed) and `biometric:password_required`
 /// (the periodic master-password check is due).
 #[command]
@@ -351,7 +357,7 @@ pub async fn unlock_with_biometric(
         Err(_) => {
             // The stored key no longer opens this vault (it was re-keyed).
             crate::biometric::clear(&app);
-            return Err("Fingerprint unlock no longer matches this vault and was turned off. Unlock with your master password, then turn it on again in Settings.".to_string());
+            return Err("Biometric unlock no longer matches this vault and was turned off. Unlock with your master password, then turn it on again in Settings.".to_string());
         }
     };
 

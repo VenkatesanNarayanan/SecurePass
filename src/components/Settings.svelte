@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import Icon from "./Icon.svelte";
   import { getThemePreference, setThemePreference, type ThemePreference } from "$lib/theme";
+  import { biometricText, NO_BIOMETRICS, type BiometricStatus } from "$lib/biometric";
 
   // Appearance applies immediately (no Save needed).
   let theme = $state<ThemePreference>(getThemePreference());
@@ -22,8 +23,9 @@
 
   let { onClose }: Props = $props();
 
-  // ── Fingerprint unlock (Android; see src-tauri/src/biometric.rs) ─────────
-  let bio = $state({ available: false, enabled: false, passwordIntervalDays: 7 });
+  // ── Biometric unlock (Android fingerprint / Windows Hello) ──────────────
+  let bio = $state<BiometricStatus>(NO_BIOMETRICS);
+  const bioText = $derived(biometricText(bio.kind, bio.passwordIntervalDays));
   let bioSetup = $state(false); // showing the master-password step
   let bioPassword = $state("");
   let bioBusy = $state(false);
@@ -44,11 +46,11 @@
     bioBusy = true;
     bioError = "";
     try {
-      // Verifies the password, then shows the fingerprint prompt.
+      // Verifies the password, then shows the fingerprint / Windows Hello prompt.
       await invoke("enable_biometric_unlock", { request: { masterPassword: bioPassword } });
       bioPassword = "";
       bioSetup = false;
-      bioSuccess = "Fingerprint unlock is on.";
+      bioSuccess = `${bioText.title} is on.`;
       setTimeout(() => (bioSuccess = ""), 4000);
       await loadBiometric();
     } catch (e) {
@@ -61,7 +63,7 @@
   async function disableBiometric() {
     bioError = "";
     await invoke("disable_biometric_unlock");
-    bioSuccess = "Fingerprint unlock is off.";
+    bioSuccess = `${bioText.title} is off.`;
     setTimeout(() => (bioSuccess = ""), 4000);
     await loadBiometric();
   }
@@ -141,7 +143,7 @@
       await invoke("change_master_password", { currentPassword, newPassword });
       pwSuccess = "Master password changed successfully!";
       if (bio.enabled) {
-        pwSuccess += " Fingerprint unlock was turned off; turn it on again below if you want it.";
+        pwSuccess += ` ${bioText.title} was turned off; turn it on again below if you want it.`;
       }
       await loadBiometric();
       currentPassword = "";
@@ -298,14 +300,11 @@
       </section>
 
       {#if bio.available}
-        <!-- Fingerprint unlock -->
+        <!-- Biometric unlock -->
         <section class="section">
-          <h3>Fingerprint unlock</h3>
+          <h3>{bioText.title}</h3>
           {#if bio.enabled}
-            <p class="hint">
-              On. Your master password is still needed at least every {bio.passwordIntervalDays} days, and after
-              a fingerprint is added to this phone.
-            </p>
+            <p class="hint">{bioText.onHint}</p>
             <div class="row-end">
               <button type="button" class="btn btn-secondary" onclick={disableBiometric}>Turn off</button>
             </div>
@@ -325,17 +324,14 @@
             <div class="row-end bio-actions">
               <button type="button" class="btn btn-ghost" onclick={cancelBiometricSetup} disabled={bioBusy}>Cancel</button>
               <button type="button" class="btn btn-primary" onclick={enableBiometric} disabled={bioBusy}>
-                {#if bioBusy}<span class="spinner"></span> Confirming…{:else}<Icon name="fingerprint" size={16} /> Continue{/if}
+                {#if bioBusy}<span class="spinner"></span> Confirming…{:else}<Icon name={bioText.icon} size={16} /> Continue{/if}
               </button>
             </div>
           {:else}
-            <p class="hint">
-              Open your vault with a fingerprint instead of typing the master password. Only a fingerprint works,
-              not the phone's PIN, and the master password is still needed every {bio.passwordIntervalDays} days.
-            </p>
+            <p class="hint">{bioText.offHint}</p>
             <div class="row-end">
               <button type="button" class="btn btn-primary" onclick={() => (bioSetup = true)}>
-                <Icon name="fingerprint" size={16} /> Turn on
+                <Icon name={bioText.icon} size={16} /> Turn on
               </button>
             </div>
           {/if}

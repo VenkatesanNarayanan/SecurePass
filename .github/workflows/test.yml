@@ -5,6 +5,8 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Lets a branch be checked by hand (Actions → Test → Run workflow).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -31,6 +33,41 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+  # Windows-only code (Windows Hello unlock in biometric.rs) is never compiled
+  # by the Linux job. Kept separate from it so the required "Rust (test +
+  # clippy)" check keeps its name.
+  rust-windows:
+    name: Rust on Windows (test + clippy)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: windows
+
+      - name: Placeholder frontend build
+        working-directory: .
+        run: mkdir -p build && echo '<!doctype html>' > build/index.html
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
 
   rust:
     name: Rust (test + clippy)
